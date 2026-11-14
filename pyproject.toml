@@ -3,20 +3,21 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "yass"
+name = "units2"
 version = "0.1.0"
-description = "Yet Another Software Suite - Python port"
+description = "WPILib's Java Units Library - Python port"
 requires-python = ">=3.12"
 
 [tool.setuptools.packages.find]
-where = ["yagsl", "yams", "units"]
+where = ["."]
+include = ["units2*"]
 
 [tool.ruff]
 line-length = 80
 target-version = "py312"
 
 [tool.ruff.lint]
-fixable = ["ALL"]     # Allow auto-fixes
+fixable = ["ALL"]
 
 [tool.ruff.format]
 quote-style = "double"
