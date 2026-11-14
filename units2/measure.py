@@ -283,7 +283,10 @@ class Measure[U: "Unit"](Protocol):
                 ret = US.Value.of(base_unit_result)
             if ret is not None:
                 return cast(Measure, ret)
-        raise TypeError(f"Incompatible type for times: {type(multiplier)}")
+        from .units import MultUnit as MU
+        return MU.combine(self.unit(), multiplier.unit()).of(
+            self.magnitude() * multiplier.magnitude()
+        )
 
     def times_conversion_factor[O: "Unit"](
         self,

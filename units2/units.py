@@ -2199,6 +2199,11 @@ class Units:
                       .symbol("min")
                       .make_and_cast(TimeUnit))
     Minute: Final = Minutes  # type: ignore # noqa: S116
+    Hours: Final = (UnitBuilder(Minutes)  # type: ignore # noqa: S116
+                    .aggregate(60.0).named("Hour")
+                    .symbol("hr")
+                    .make_and_cast(TimeUnit))
+    Hour: Final = Hours  # type: ignore # noqa: S116
 
     Radians: Final = BaseUnits.BaseAngleUnit  # type: ignore # noqa: S116
     Radian: Final = Radians  # type: ignore # noqa: S116

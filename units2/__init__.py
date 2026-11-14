@@ -6,6 +6,14 @@
 # - WPILib
 # - Alan M. Burr <info@alanburr.us.eu.org>
 
+import sys
+
+if sys.version_info < (3, 12):  # noqa: UP036
+    raise RuntimeError(
+        "units2 requires python>=3.12"
+        ", you have {}".format(sys.version)
+    )
+
 from .measure import MeasureOf
 from .units import Units
 

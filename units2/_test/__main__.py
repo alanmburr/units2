@@ -6,16 +6,26 @@
 # - WPILib
 # - Alan M. Burr <info@alanburr.us.eu.org>
 
+from __future__ import annotations
+
 import math
 import sys
 import unittest
 from collections.abc import Callable
-from typing import Any, Self, SupportsFloat, SupportsIndex, cast
+from typing import (
+    Any,
+    Final,
+    Self,
+    cast,
+    final,
+    overload,
+)
 
 from units2 import measure
 from units2.collections import LongToObjectHashMap
-from units2.measure import Distance, ImmutableMeasure, Voltage
+from units2.measure import Distance, ImmutableMeasure, MeasureOf, Voltage
 
+from .._test import TestCase
 from ..units import (
     AngleUnit,
     DistanceUnit,
@@ -56,27 +66,96 @@ class ExampleUnit(Unit):
         return VelocityUnit.combine(self, other)
 
 
-class TestCase(unittest.TestCase):
-    def assertIsClose(
-        self,
-        a: SupportsFloat | SupportsIndex,
-        b: SupportsFloat | SupportsIndex,
-        rel_tol: SupportsFloat | SupportsIndex = 1e-09,
-        abs_tol: SupportsFloat | SupportsIndex = 0.0,
-        msg: str | None = None
-    ):
-        isclose = math.isclose(a, b, rel_tol=rel_tol, abs_tol=abs_tol)
-        a, b = float(a), float(b)
-        rel_tol, abs_tol = float(rel_tol), float(abs_tol)
-        if isclose:
-            return
-        raise self.failureException(
-            f"(|{a} - {b}| = {abs(a - b)})"
-            " ≤ "
-            f"({max(rel_tol * max(abs(a), abs(b)), abs_tol)} = "
-            "(max( rel_tol * max(|a|, |b|), abs_tol))" +
-            (f" : {msg}" if msg is not None else "")
-        )
+class ElectricChargeUnit(Unit):
+    """ Example new unit from the Readme """
+
+    @overload
+    def __init__(self, base_unit_equivalent: float, name: str, symbol: str):
+        ...
+
+    @overload
+    def __init__(self,
+                 to_base_converter: UnaryFunction,
+                 from_base_converter: UnaryFunction,
+                 name: str, symbol: str): ...
+
+    def __init__(self, bue_tbc, fbc_name, name_symbol, symbol=None):
+        if (
+            isinstance(bue_tbc, (float, int))
+            and isinstance(fbc_name, str)
+            and isinstance(name_symbol, str)
+        ):
+            super().__init__(
+                base_unit=None,
+                base_unit_equivalent=bue_tbc,
+                unit_name=fbc_name,
+                unit_symbol=name_symbol
+            )
+        elif (
+            isinstance(bue_tbc, UnaryFunction)
+            and isinstance(fbc_name, UnaryFunction)
+            and isinstance(name_symbol, str)
+            and isinstance(symbol, str)
+        ):
+            super().__init__(
+                base_unit=None,
+                to_base_converter=bue_tbc,
+                from_base_converter=fbc_name,
+                unit_name=name_symbol,
+                unit_symbol=symbol
+            )
+        else:
+            raise TypeError(
+                "Bad arguments: "
+                f"(a) {type(bue_tbc)} should be UnaryFunction|float|int, "
+                f"(b) {type(fbc_name)} should be UnaryFunction|str, "
+                f"(c) {type(name_symbol)} should be str, "
+                f"(d) {type(symbol)} should be str|None"
+            )
+
+    def get_base_unit(self) -> Self:
+        # The base method must be overridden
+        # in order to return the correct type
+        return super().get_base_unit()
+
+    def of(self, magnitude: float) -> Measure["ElectricChargeUnit"]:
+        return ImmutableMeasure.of_relative_units(magnitude, self)
+
+    def of_base_units(self, magnitude: float) -> Measure["ElectricChargeUnit"]:
+        return ImmutableMeasure.of_base_units(magnitude, self)
+
+    def zero(self) -> Measure[Self]:
+        return super().zero()
+
+    def one(self) -> Measure[Self]:
+        return super().one()
+
+    @overload
+    def per(self, other: TimeUnit) -> VelocityUnit[Self]: ...
+
+    @overload
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]: ...
+
+    def per(self, other):
+        if isinstance(other, TimeUnit):
+            # Note: technically, this would return a CurrentUnit,
+            # since electric charge per time is current (measured in Amperes)
+            return VelocityUnit.combine(self, other)
+        return PerUnit.combine(self, other)
+
+    def convert_from(magnitude: float, other: "ElectricChargeUnit") -> Measure["ElectricChargeUnit"]:
+        return self.from_base_units(other.to_base_units(magnitude))
+
+
+@final
+class ElectricChargeUnits:
+    Coulomb: Final[ElectricChargeUnit] = ElectricChargeUnit(1.0,
+                                                            "Coulomb", "C")
+    ElectronCharge: Final[ElectricChargeUnit] = ElectricChargeUnit(1.60217646e-19,
+                                                                   "Electron Charge", "e")
+    AmpHour: Final[ElectricChargeUnit] = ElectricChargeUnit(3600.0,
+                                                            "Amp Hour", "Ah")
+    MilliampHour: Final[ElectricChargeUnit] = Units.Milli(AmpHour)
 
 
 class AnyUnitTest(TestCase):
@@ -479,6 +558,19 @@ class MeasureTest(TestCase):
                                            Units.Millimeters.of(200)))
         self.assertTrue(m_compared.is_near(m_comparing,
                                            Units.Centimeters.of(-20)))
+
+    def test_typing(self) -> None:
+        arm_mass: MeasureOf.Mass = Units.Kilograms.of(1.423)
+        arm_length: MeasureOf.Distance = Units.Inches.of(32.25)
+        arm_min_angle: MeasureOf.Angle = Units.Degrees.of(5)
+        arm_max_travel: MeasureOf.Angle = Units.Rotations.of(0.45)
+        max_speed: MeasureOf.LinearVelocity = Units.MetersPerSecond.of(2.5)
+
+        self.assertIsNotNone(arm_mass)
+        self.assertIsNotNone(arm_length)
+        self.assertIsNotNone(arm_min_angle)
+        self.assertIsNotNone(arm_max_travel)
+        self.assertIsNotNone(max_speed)
 
 
 class MultUnitTest(TestCase):
@@ -1133,6 +1225,38 @@ class AngleTest(TestCase):
         sqrt3 = math.sqrt(3.0)
         self.assertIsClose(m.cot(), sqrt3,
                            abs_tol=1e-5)
+
+
+class AccelerationUnitTest(TestCase):
+    def test_amps_per_second_per_second(self) -> None:
+        u = Units.Amps.per(Units.Second).per(Units.Second)
+        m = u.of(0.25)
+        self.assertEqual("Amp per Second per Second", u.name())
+        self.assertEqual("A/s/s", u.symbol())
+        self.assertEqual(0.25, m.magnitude())
+
+
+class ElectricChargeTest(TestCase):
+    def test_coulomb_per_second_equals_amps(self) -> None:
+        c = Units.Amps.of(30)
+        u = ElectricChargeUnits.Coulomb.per(Units.Seconds)
+        q_by_t = u.of(30)
+        self.assertEqual("Coulomb per Second", u.name())
+        self.assertEqual("C/s", u.symbol())
+        self.assertEqual(c.magnitude(), q_by_t.magnitude())
+
+    def test_elementary_charge_times_volts_equals_joules(self) -> None:
+        m = ElectricChargeUnits.ElectronCharge.one().times(Units.Volts.of(100))
+        self.assertEqual("Electron Charge-Volt", m.unit().name())
+        self.assertEqual("e*V", m.unit().symbol())
+        self.assertIsClose(1.60218e-17, m.base_unit_magnitude(), abs_tol=1e-5)
+
+    def test_current_times_time_equals_amp_hour(self) -> None:
+        m = ElectricChargeUnits.AmpHour.of(6)
+        m2 = Units.Amps.of(3).times(Units.Hours.of(2))
+        self.assertEqual("Amp-Hour", m2.unit().name())
+        self.assertEqual("A*hr", m2.unit().symbol())
+        self.assertEqual(m2.magnitude(), m.magnitude())
 
 
 if __name__ == "__main__":
