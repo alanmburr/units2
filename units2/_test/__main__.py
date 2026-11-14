@@ -1,3 +1,11 @@
+# Copyright (c) FIRST and other WPILib contributors.
+# Open Source Software; you can modify and/or share it under the terms of
+# the WPILib BSD license file in the root directory of this project.
+#
+# Contributors:
+# - WPILib
+# - Alan M. Burr <info@alanburr.us.eu.org>
+
 import math
 import sys
 import unittest
@@ -1056,7 +1064,7 @@ class Collections_LongToObjectHashMapTest(TestCase):
         self.assertEqual(16384, map.capacity())
 
     def test_clear(self) -> None:
-        map = LongToObjectHashMap()
+        map = LongToObjectHashMap[int]()
         for i in range(10_000):
             map.put(i, i * i)
         self.assertEqual(10_000, map.size())
@@ -1081,6 +1089,50 @@ class Collections_LongToObjectHashMapTest(TestCase):
         for i in range(n_inserts):
             self.assertTrue(key_set.contains(i),
                             f"keySet does not contain key {i}")
+
+
+class AngleTest(TestCase):
+    def test_cos(self) -> None:
+        m1 = Units.Radians.of(math.pi)
+        m2 = Units.Degrees.of(180)
+        self.assertEqual(m1, m2)
+        self.assertIsClose(m1.cos(), -1,
+                           abs_tol=1e-5)
+        self.assertIsClose(m2.cos(), -1,
+                           abs_tol=1e-5)
+
+    def test_sec(self) -> None:
+        m = Units.Degrees.of(30)
+        two_thirds_sqrt3 = (2.0/3.0) * math.sqrt(3.0)
+        self.assertEqual(m.sec(), two_thirds_sqrt3)
+
+    def test_sin(self) -> None:
+        m1 = Units.Radians.of(math.pi/2.0)
+        m2 = Units.Degrees.of(90)
+        self.assertEqual(m1, m2)
+        self.assertEqual(m1.sin(), 1)
+        self.assertEqual(m2.sin(), 1)
+
+    def test_csc(self) -> None:
+        m = Units.Degrees.of(30)
+        self.assertIsClose(m.csc(), 2,
+                           abs_tol=1e-5)
+
+    def test_tan(self) -> None:
+        m1 = Units.Radians.of(math.pi/4.0)
+        m2 = Units.Degrees.of(45)
+        self.assertEqual(m1, m2)
+        self.assertEqual(m1, m2)
+        self.assertIsClose(m1.tan(), 1,
+                           abs_tol=1e-5)
+        self.assertIsClose(m2.tan(), 1,
+                           abs_tol=1e-5)
+
+    def test_cot(self) -> None:
+        m = Units.Degrees.of(30)
+        sqrt3 = math.sqrt(3.0)
+        self.assertIsClose(m.cot(), sqrt3,
+                           abs_tol=1e-5)
 
 
 if __name__ == "__main__":

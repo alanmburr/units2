@@ -1,3 +1,11 @@
+# Copyright (c) FIRST and other WPILib contributors.
+# Open Source Software; you can modify and/or share it under the terms of
+# the WPILib BSD license file in the root directory of this project.
+#
+# Contributors:
+# - WPILib
+# - Alan M. Burr <info@alanburr.us.eu.org>
+
 from __future__ import annotations
 
 import math
@@ -10,6 +18,7 @@ from typing import (
     Self,
     TypeVar,
     cast,
+    final,
     overload,
     runtime_checkable,
 )
@@ -608,7 +617,7 @@ class Dimensionless(ImmutableMeasure["Unit"]):
 
 
 class Distance(ImmutableMeasure["Unit"]):
-    @overload
+    @overload  # type: ignore
     def div(self, other: LinearVelocity) -> Time: ...
 
     @overload
@@ -663,6 +672,27 @@ class Angle(ImmutableMeasure["Unit"]):
             base_unit_magnitude,
             unit
         )
+
+    def sin(self) -> float:
+        from .units import Units as US
+        return math.sin(self.in_unit(US.Radians))
+
+    def cos(self) -> float:
+        from .units import Units as US
+        return math.cos(self.in_unit(US.Radians))
+
+    def tan(self) -> float:
+        from .units import Units as US
+        return math.tan(self.in_unit(US.Radians))
+
+    def csc(self) -> float:
+        return 1.0/self.sin()
+
+    def sec(self) -> float:
+        return 1.0/self.cos()
+
+    def cot(self) -> float:
+        return 1.0/self.tan()
 
 
 class Mult[A, B](ImmutableMeasure["Unit"]):
@@ -747,3 +777,32 @@ class Resistance(Per["VoltageUnit", "CurrentUnit"]):
 
 class Acceleration[D: "Unit"](ImmutableMeasure["AccelerationUnit"]):
     pass
+
+
+@final
+class MeasureOf:
+    Distance: Final = Distance  # type: ignore # noqa: S116
+    Time: Final = Time  # type: ignore # noqa: S116
+    Mass: Final = Mass  # type: ignore # noqa: S116
+    Angle: Final = Angle  # type: ignore # noqa: S116
+    Mult: Final = Mult  # type: ignore # noqa: S116
+    Per: Final = Per  # type: ignore # noqa: S116
+    Voltage: Final = Voltage  # type: ignore # noqa: S116
+    Current: Final = Current  # type: ignore # noqa: S116
+    Energy: Final = Energy  # type: ignore # noqa: S116
+    Temperature: Final = Temperature  # type: ignore # noqa: S116
+    Velocity: Final = Velocity  # type: ignore # noqa: S116
+    LinearVelocity: Final = LinearVelocity  # type: ignore # noqa: S116
+    AngularVelocity: Final = AngularVelocity  # type: ignore # noqa: S116
+    Frequency: Final = Frequency  # type: ignore # noqa: S116
+    LinearAcceleration: Final = (  # type: ignore # noqa: S116
+        LinearAcceleration)
+    AngularAcceleration: Final = (  # type: ignore # noqa: S116
+        AngularAcceleration)
+    Force: Final = Force  # type: ignore # noqa: S116
+    Torque: Final = Torque  # type: ignore # noqa: S116
+    LinearMomentum: Final = LinearMomentum  # type: ignore # noqa: S116
+    AngularMomentum: Final = AngularMomentum  # type: ignore # noqa: S116
+    MomentOfInertia: Final = MomentOfInertia  # type: ignore # noqa: S116
+    Power: Final = Power  # type: ignore # noqa: S116
+    Acceleration: Final = Acceleration  # type: ignore # noqa: S116

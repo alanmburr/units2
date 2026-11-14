@@ -1,3 +1,11 @@
+# Copyright (c) FIRST and other WPILib contributors.
+# Open Source Software; you can modify and/or share it under the terms of
+# the WPILib BSD license file in the root directory of this project.
+#
+# Contributors:
+# - WPILib
+# - Alan M. Burr <info@alanburr.us.eu.org>
+
 from __future__ import annotations
 
 import copy
@@ -1820,10 +1828,7 @@ class MomentOfInertiaUnit[
             self
         )
 
-    @overload
-    def per[O: Unit](self, other: O) -> PerUnit[Self, O]: ...  # type: ignore
-
-    def per(self, other):  # type: ignore
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]:  # type: ignore
         return super().per(other)
 
 
@@ -1848,9 +1853,9 @@ class PowerUnit[
                 energy.get_base_unit(), time.get_base_unit()  # type: ignore
             )
         )
-        super().__init__(base, energy, time)
+        super().__init__(base, energy, time)  # type: ignore
 
-    @overload
+    @overload  # type: ignore
     @staticmethod
     def combine[A_: EnergyUnit, B_: TimeUnit](
         a: A_, b: B_
@@ -1882,7 +1887,10 @@ class PowerUnit[
 
     @staticmethod
     def combine(a, b):
-        ALLOWED_PAIRS: tuple[tuple[type[Unit], type[Unit]], ...] = (
+        ALLOWED_PAIRS: tuple[  # type: ignore[annotation-unchecked]
+            tuple[type[Unit], type[Unit]],
+            ...
+        ] = (
             (EnergyUnit, TimeUnit),
             (VoltageUnit, CurrentUnit),
             (CurrentUnit, VoltageUnit),
@@ -1987,10 +1995,7 @@ class ResistanceUnit[A: VoltageUnit, B: CurrentUnit](PerUnit[A, B]):
             self
         )
 
-    @overload
-    def per[O: Unit](self, other: O) -> PerUnit[Self, O]: ...  # type: ignore
-
-    def per(self, other):  # type: ignore
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]:  # type: ignore
         return super().per(other)
 
 
@@ -2001,16 +2006,7 @@ ResistanceCache: CombinatoryUnitCache[
 
 class AccelerationUnit[U: Unit](PerUnit[VelocityUnit[U], TimeUnit]):
     @overload
-    def __init__(self, velocity_unit: U, period: TimeUnit):  # type: ignore
-        base = (
-            None
-            if velocity_unit.is_base_unit() and period.is_base_unit()
-            else AccelerationUnit.combine(
-                velocity_unit.get_base_unit(),  # type: ignore
-                period.get_base_unit()
-            )
-        )
-        super().__init__(base, velocity_unit, period)  # type: ignore
+    def __init__(self, velocity_unit: U, period: TimeUnit): ...  # type: ignore
 
     @overload
     def __init__(
@@ -2021,13 +2017,43 @@ class AccelerationUnit[U: Unit](PerUnit[VelocityUnit[U], TimeUnit]):
         name: str,
         symbol: str
     ):
-        super().__init__(  # type: ignore # noqa: S930
-            base_unit=base_unit,
-            to_base_converter=to_base_converter,   # type: ignore # noqa: S930
-            from_base_converter=(   # type: ignore # noqa: S930
-                from_base_converter),
-            unit_name=name,   # type: ignore # noqa: S930
-            unit_symbol=symbol   # type: ignore # noqa: S930
+        ...
+
+    def __init__(  # type: ignore
+        self,
+        vu_bu,
+        tbc_p,
+        fbc=None,
+        name=None,
+        symbol=None
+    ):
+        if isinstance(vu_bu, Unit) and isinstance(tbc_p, TimeUnit):
+            base = (
+                None
+                if vu_bu.is_base_unit() and tbc_p.is_base_unit()
+                else AccelerationUnit.combine(
+                    vu_bu.get_base_unit(),  # type: ignore
+                    tbc_p.get_base_unit()
+                )
+            )
+            super().__init__(base, vu_bu, tbc_p)  # type: ignore
+        elif (
+            isinstance(vu_bu, AccelerationUnit)
+            and isinstance(tbc_p, UnaryFunction)
+            and isinstance(fbc, UnaryFunction)
+            and name is not None
+            and symbol is not None
+        ):
+            super().__init__(  # type: ignore # noqa: S930
+                base_unit=vu_bu,
+                to_base_converter=tbc_p,   # type: ignore # noqa: S930
+                from_base_converter=fbc,   # type: ignore # noqa: S930
+                unit_name=name,   # type: ignore # noqa: S930
+                unit_symbol=symbol   # type: ignore # noqa: S930
+            )
+        raise NotImplementedError(
+            "AccelerationUnit constructor takes (Unit, TimeUnit) or "
+            "(AccelerationUnit, UnaryFunction, UnaryFunction, str, str)"
         )
 
     @staticmethod
@@ -2098,7 +2124,7 @@ class BaseUnits:
         base_unit=None, base_unit_equivalent=1.0,
         unit_name="Kilogram", unit_symbol="Kg")
     BaseAngleUnit: Final = AngleUnit(  # noqa: S116
-        base_unit=None, base_unit_equivalent=1.0, 
+        base_unit=None, base_unit_equivalent=1.0,
         unit_name="Radian", unit_symbol="rad")
     BaseVoltageUnit: Final = VoltageUnit(  # noqa: S116
         base_unit=None, base_unit_equivalent=1.0,
@@ -2122,116 +2148,134 @@ class BaseUnits:
 
 @final
 class Units:
-    Value: Final = BaseUnits.BaseValue  # noqa: S116
-    Percent: Final = (UnitBuilder(Value).split_into(100.0)  # noqa: S116
+    Value: Final = BaseUnits.BaseValue  # type: ignore # noqa: S116
+    Percent: Final = (UnitBuilder(Value)  # type: ignore # noqa: S116
+                      .split_into(100.0)
                       .named("Percent").symbol("%")
                       .make_and_cast(DimensionlessUnit))
 
-    Meters: Final = BaseUnits.BaseDistanceUnit  # noqa: S116
-    Meter: Final = Meters  # noqa: S116
-    Millimeters: Final = (UnitBuilder(Meters).split_into(1000.0)  # noqa: S116
+    Meters: Final = BaseUnits.BaseDistanceUnit  # type: ignore # noqa: S116
+    Meter: Final = Meters  # type: ignore # noqa: S116
+    Millimeters: Final = (UnitBuilder(Meters)  # type: ignore # noqa: S116
+                          .split_into(1000.0)
                           .named("Millimeter").symbol("mm")
                           .make_and_cast(DistanceUnit))
-    Millimeter: Final = Millimeters  # noqa: S116
-    Centimeters: Final = (UnitBuilder(Meters).split_into(100.0)  # noqa: S116
+    Millimeter: Final = Millimeters  # type: ignore # noqa: S116
+    Centimeters: Final = (UnitBuilder(Meters)  # type: ignore # noqa: S116
+                          .split_into(100.0)
                           .named("Centimeter").symbol("cm")
                           .make_and_cast(DistanceUnit))
-    Centimeter: Final = Centimeters  # noqa: S116
-    Inches: Final = (UnitBuilder(Millimeters).aggregate(25.4)  # noqa: S116
+    Centimeter: Final = Centimeters  # type: ignore # noqa: S116
+    Inches: Final = (UnitBuilder(Millimeters)  # type: ignore # noqa: S116
+                     .aggregate(25.4)
                      .named("Inch").symbol("in")
                      .make_and_cast(DistanceUnit))
-    Inch: Final = Inches  # noqa: S116
-    Feet: Final = (UnitBuilder(Inches).aggregate(12.0)  # noqa: S116
+    Inch: Final = Inches  # type: ignore # noqa: S116
+    Feet: Final = (UnitBuilder(Inches)  # type: ignore # noqa: S116
+                   .aggregate(12.0)
                    .named("Foot").symbol("ft")
                    .make_and_cast(DistanceUnit))
-    Foot: Final = Feet  # noqa: S116
+    Foot: Final = Feet  # type: ignore # noqa: S116
 
-    Seconds: Final = BaseUnits.BaseTimeUnit  # noqa: S116
-    Second: Final = Seconds  # noqa: S116
-    Milliseconds: Final = (UnitBuilder(Seconds)  # noqa: S116
+    Seconds: Final = BaseUnits.BaseTimeUnit  # type: ignore # noqa: S116
+    Second: Final = Seconds  # type: ignore # noqa: S116
+    Milliseconds: Final = (UnitBuilder(Seconds)  # type: ignore # noqa: S116
                            .split_into(1000.0).named("Millisecond")
                            .symbol("ms")
                            .make_and_cast(TimeUnit))
-    Millisecond: Final = Milliseconds  # noqa: S116
-    Microseconds: Final = (UnitBuilder(Seconds)  # noqa: S116
+    Millisecond: Final = Milliseconds  # type: ignore # noqa: S116
+    Microseconds: Final = (UnitBuilder(Seconds)  # type: ignore # noqa: S116
                            .split_into(1_000_000.0).named("Microsecond")
                            .symbol("us")
                            .make_and_cast(TimeUnit))
-    Microsecond: Final = Microseconds  # noqa: S116
-    Nanoseconds: Final = (UnitBuilder(Seconds)  # noqa: S116
+    Microsecond: Final = Microseconds  # type: ignore # noqa: S116
+    Nanoseconds: Final = (UnitBuilder(Seconds)  # type: ignore # noqa: S116
                           .split_into(1_000_000_000.0).named("Nanosecond")
                           .symbol("ns")
                           .make_and_cast(TimeUnit))
-    Nanosecond: Final = Nanoseconds  # noqa: S116
-    Minutes: Final = (UnitBuilder(Seconds)  # noqa: S116
+    Nanosecond: Final = Nanoseconds  # type: ignore # noqa: S116
+    Minutes: Final = (UnitBuilder(Seconds)  # type: ignore # noqa: S116
                       .aggregate(60.0).named("Minute")
                       .symbol("min")
                       .make_and_cast(TimeUnit))
-    Minute: Final = Minutes  # noqa: S116
+    Minute: Final = Minutes  # type: ignore # noqa: S116
 
-    Radians: Final = BaseUnits.BaseAngleUnit  # noqa: S116
-    Radian: Final = Radians  # noqa: S116
-    Revolutions: Final = (UnitBuilder(Radians)  # noqa: S116
+    Radians: Final = BaseUnits.BaseAngleUnit  # type: ignore # noqa: S116
+    Radian: Final = Radians  # type: ignore # noqa: S116
+    Revolutions: Final = (UnitBuilder(Radians)  # type: ignore # noqa: S116
                           .aggregate(2.0 * math.pi)
                           .named("Revolution").symbol("R")
                           .make_and_cast(AngleUnit))
-    Revolution: Final = Revolutions  # noqa: S116
-    Rotations: Final = Revolutions  # noqa: S116
-    Rotation: Final = Rotations  # noqa: S116
-    Degrees: Final = (UnitBuilder(Revolutions).split_into(360.0)  # noqa: S116
+    Revolution: Final = Revolutions  # type: ignore # noqa: S116
+    Rotations: Final = Revolutions  # type: ignore # noqa: S116
+    Rotation: Final = Rotations  # type: ignore # noqa: S116
+    Degrees: Final = (UnitBuilder(Revolutions)  # type: ignore # noqa: S116
+                      .split_into(360.0)
                       .named("Degree").symbol("\xb0")
                       .make_and_cast(AngleUnit))
-    Degree: Final = Degrees  # noqa: S116
+    Degree: Final = Degrees  # type: ignore # noqa: S116
 
-    MetersPerSecond: Final = Meters.per(Second)  # noqa: S116
-    FeetPerSecond: Final = Feet.per(Second)  # noqa: S116
-    InchesPerSecond: Final = Inches.per(Second)  # noqa: S116
-    RevolutionsPerSecond: Final = Revolutions.per(Second)  # noqa: S116
-    RotationsPerSecond: Final = Rotations.per(Second)  # noqa: S116
-    RotationsPerMinute: Final = Rotations.per(Minute)  # noqa: S116
-    RPM: Final = RotationsPerMinute  # noqa: S116
-    RadiansPerSecond: Final = Radians.per(Second)  # noqa: S116
-    DegreesPerSecond: Final = Degrees.per(Second)  # noqa: S116
+    MetersPerSecond: Final = Meters.per(Second)  # type: ignore # noqa: S116
+    FeetPerSecond: Final = Feet.per(Second)  # type: ignore # noqa: S116
+    InchesPerSecond: Final = Inches.per(Second)  # type: ignore # noqa: S116
+    RevolutionsPerSecond: Final = (  # type: ignore # noqa: S116
+        Revolutions.per(Second))
+    RotationsPerSecond: Final = (  # type: ignore # noqa: S116
+        Rotations.per(Second))
+    RotationsPerMinute: Final = (  # type: ignore # noqa: S116
+        Rotations.per(Minute))
+    RPM: Final = RotationsPerMinute  # type: ignore # noqa: S116
+    RadiansPerSecond: Final = Radians.per(Second)  # type: ignore # noqa: S116
+    DegreesPerSecond: Final = Degrees.per(Second)  # type: ignore # noqa: S116
 
-    Hertz: Final = (UnitBuilder(Value.per(Second))  # noqa: S116
+    Hertz: Final = (UnitBuilder(Value.per(Second))  # type: ignore # noqa: S116
                     .named("Hertz").symbol("Hz")
                     .make_and_cast(FrequencyUnit[DimensionlessUnit]))
-    Millihertz: Final = (UnitBuilder(Hertz).split_into(1000.0)  # noqa: S116
+    Millihertz: Final = (UnitBuilder(Hertz)  # type: ignore # noqa: S116
+                         .split_into(1000.0)
                          .named("Millihertz").symbol("MHz")
                          .make_and_cast(FrequencyUnit[DimensionlessUnit]))
 
-    MetersPerSecondPerSecond: Final = MetersPerSecond.per(Second)  # noqa: S116
-    FeetPerSecondPerSecond: Final = FeetPerSecond.per(Second)  # noqa: S116
-    InchesPerSecondPerSecond: Final = InchesPerSecond.per(Second)  # noqa: S116
-    RotationsPerSecondPerSecond: Final = (  # noqa: S116
+    MetersPerSecondPerSecond: Final = (  # type: ignore # noqa: S116
+        MetersPerSecond.per(Second))
+    FeetPerSecondPerSecond: Final = (  # type: ignore # noqa: S116
+        FeetPerSecond.per(Second))
+    InchesPerSecondPerSecond: Final = (  # type: ignore # noqa: S116
+        InchesPerSecond.per(Second))
+    RotationsPerSecondPerSecond: Final = (  # type: ignore # noqa: S116
         RotationsPerSecond.per(Second))
-    RadiansPerSecondPerSecond: Final = (  # noqa: S116
+    RadiansPerSecondPerSecond: Final = (  # type: ignore # noqa: S116
         RadiansPerSecond.per(Second))
-    DegreesPerSecondPerSecond: Final = (  # noqa: S116
+    DegreesPerSecondPerSecond: Final = (  # type: ignore # noqa: S116
         DegreesPerSecond.per(Second))
-    Gs: Final = (UnitBuilder(MetersPerSecondPerSecond)  # noqa: S116
-                 .aggregate(9.80665)
-                 .named("G").symbol("G")
-                 .make_and_cast(LinearAccelerationUnit[
-                     LinearVelocityUnit[DistanceUnit]
-                     ]))
+    Gs: Final = (  # type: ignore # noqa: S116
+        UnitBuilder(MetersPerSecondPerSecond)
+        .aggregate(9.80665)
+        .named("G").symbol("G")
+        .make_and_cast(LinearAccelerationUnit[
+            LinearVelocityUnit[DistanceUnit]
+        ])
+    )
 
-    Kilograms: Final = BaseUnits.BaseMassUnit  # noqa: S116
-    Kilogram: Final = Kilograms  # noqa: S116
-    Grams: Final = (UnitBuilder(Kilograms).split_into(1000.0)  # noqa: S116
+    Kilograms: Final = BaseUnits.BaseMassUnit  # type: ignore # noqa: S116
+    Kilogram: Final = Kilograms  # type: ignore # noqa: S116
+    Grams: Final = (UnitBuilder(Kilograms)  # type: ignore # noqa: S116
+                    .split_into(1000.0)
                     .named("Gram").symbol("g")
                     .make_and_cast(MassUnit))
-    Gram: Final = Grams  # noqa: S116
-    Pounds: Final = (UnitBuilder(Grams).aggregate(453.592)  # noqa: S116
+    Gram: Final = Grams  # type: ignore # noqa: S116
+    Pounds: Final = (UnitBuilder(Grams)  # type: ignore # noqa: S116
+                     .aggregate(453.592)
                      .named("Pound").symbol("lb.")
                      .make_and_cast(MassUnit))
-    Pound: Final = Pounds  # noqa: S116
-    Ounces: Final = (UnitBuilder(Pounds).split_into(16.0)  # noqa: S116
+    Pound: Final = Pounds  # type: ignore # noqa: S116
+    Ounces: Final = (UnitBuilder(Pounds)  # type: ignore # noqa: S116
+                     .split_into(16.0)
                      .named("Ounce").symbol("oz.")
                      .make_and_cast(MassUnit))
-    Ounce: Final = Ounces  # noqa: S116
+    Ounce: Final = Ounces  # type: ignore # noqa: S116
 
-    Newtons: Final = (  # noqa: S116
+    Newtons: Final = (  # type: ignore # noqa: S116
         UnitBuilder(Kilograms.mult(MetersPerSecondPerSecond))
         .named("Newton").symbol("N")
         .make_and_cast(ForceUnit[
@@ -2240,49 +2284,57 @@ class Units:
                                 LinearVelocityUnit[DistanceUnit]
                             ]
                         ]))
-    Newton: Final = Newtons  # noqa: S116
-    PoundsForce: Final = (UnitBuilder(Pounds.mult(Gs))  # noqa: S116
-                          .named("Pound-force").symbol("lbsf.")
-                          .make_and_cast(ForceUnit[
-                              MassUnit,
-                              LinearAccelerationUnit[
-                                LinearVelocityUnit[DistanceUnit]
-                              ]
-                          ]))
-    PoundForce: Final = PoundsForce  # noqa: S116
-    OuncesForce: Final = (UnitBuilder(Ounces.mult(Gs))  # noqa: S116
-                          .named("Ounce-force").symbol("ozf")
-                          .make_and_cast(ForceUnit[
-                              MassUnit,
-                              LinearAccelerationUnit[
-                                LinearVelocityUnit[DistanceUnit]
-                              ]
-                          ]))
-    OunceForce: Final = OuncesForce  # noqa: S116
+    Newton: Final = Newtons  # type: ignore # noqa: S116
+    PoundsForce: Final = (  # type: ignore # noqa: S116
+        UnitBuilder(Pounds.mult(Gs))
+        .named("Pound-force").symbol("lbsf.")
+        .make_and_cast(ForceUnit[
+            MassUnit,
+            LinearAccelerationUnit[
+                LinearVelocityUnit[DistanceUnit]
+            ]
+        ])
+    )
+    PoundForce: Final = PoundsForce  # type: ignore # noqa: S116
+    OuncesForce: Final = (  # type: ignore # noqa: S116
+        UnitBuilder(Ounces.mult(Gs))
+        .named("Ounce-force").symbol("ozf")
+        .make_and_cast(ForceUnit[
+            MassUnit,
+            LinearAccelerationUnit[
+                LinearVelocityUnit[DistanceUnit]
+            ]
+        ])
+    )
+    OunceForce: Final = OuncesForce  # type: ignore # noqa: S116
 
-    NewtonMeters: Final = Meters.mult_as_torque(Newtons)  # noqa: S116
-    NewtonMeter: Final = NewtonMeters  # noqa: S116
-    PoundFeet: Final = Feet.mult_as_torque(PoundsForce)  # noqa: S116
-    PoundFoot: Final = PoundFeet  # noqa: S116
-    PoundInches: Final = Inches.mult_as_torque(PoundsForce)  # noqa: S116
-    PoundInch: Final = PoundInches  # noqa: S116
-    OunceInches: Final = Inches.mult_as_torque(OuncesForce)  # noqa: S116
-    OunceInch: Final = OunceInches  # noqa: S116
+    NewtonMeters: Final = (  # type: ignore # noqa: S116
+        Meters.mult_as_torque(Newtons))
+    NewtonMeter: Final = NewtonMeters  # type: ignore # noqa: S116
+    PoundFeet: Final = (  # type: ignore # noqa: S116
+        Feet.mult_as_torque(PoundsForce))
+    PoundFoot: Final = PoundFeet  # type: ignore # noqa: S116
+    PoundInches: Final = (  # type: ignore # noqa: S116
+        Inches.mult_as_torque(PoundsForce))
+    PoundInch: Final = PoundInches  # type: ignore # noqa: S116
+    OunceInches: Final = (  # type: ignore # noqa: S116
+        Inches.mult_as_torque(OuncesForce))
+    OunceInch: Final = OunceInches  # type: ignore # noqa: S116
 
-    KilogramMetersPerSecond: Final = (  # noqa: S116
+    KilogramMetersPerSecond: Final = (  # type: ignore # noqa: S116
         Kilograms.mult(MetersPerSecond).cast(MultUnit[
             MassUnit,
             LinearVelocityUnit[DistanceUnit]
         ])
     )
-    PoundInchesPerSecond: Final = (  # noqa: S116
+    PoundInchesPerSecond: Final = (  # type: ignore # noqa: S116
         Pounds.mult(InchesPerSecond).cast(MultUnit[
             MassUnit,
             LinearVelocityUnit[DistanceUnit]
         ])
     )
 
-    KilogramMetersSquaredPerSecond: Final = (  # noqa: S116
+    KilogramMetersSquaredPerSecond: Final = (  # type: ignore # noqa: S116
         KilogramMetersPerSecond.mult(Meters).cast(MultUnit[
             MassUnit,
             MultUnit[
@@ -2291,7 +2343,7 @@ class Units:
             ]
         ])
     )
-    PoundInchesSquaredPerSecond: Final = (  # noqa: S116
+    PoundInchesSquaredPerSecond: Final = (  # type: ignore # noqa: S116
         PoundInchesPerSecond.mult(Inches).cast(MultUnit[
             MassUnit,
             MultUnit[
@@ -2301,7 +2353,7 @@ class Units:
         ])
     )
 
-    KilogramSquareMeters: Final = (  # noqa: S116
+    KilogramSquareMeters: Final = (  # type: ignore # noqa: S116
         KilogramMetersSquaredPerSecond.per(RadiansPerSecond).cast(PerUnit[
             MultUnit[
                 MassUnit,
@@ -2313,7 +2365,7 @@ class Units:
             AngularVelocityUnit[AngleUnit]
         ])
     )
-    PoundSquareInches: Final = (  # noqa: S116
+    PoundSquareInches: Final = (  # type: ignore # noqa: S116
         PoundInchesSquaredPerSecond.per(RadiansPerSecond).cast(PerUnit[
             MultUnit[
                 MassUnit,
@@ -2326,84 +2378,96 @@ class Units:
         ])
     )
 
-    Volts: Final = BaseUnits.BaseVoltageUnit  # noqa: S116
-    Volt: Final = Volts  # noqa: S116
-    Millivolts: Final = (UnitBuilder(Volts).split_into(1000.0)  # noqa: S116
+    Volts: Final = BaseUnits.BaseVoltageUnit  # type: ignore # noqa: S116
+    Volt: Final = Volts  # type: ignore # noqa: S116
+    Millivolts: Final = (UnitBuilder(Volts)  # type: ignore # noqa: S116
+                         .split_into(1000.0)
                          .named("Millivolt").symbol("mV")
                          .make_and_cast(VoltageUnit))
-    Millivolt: Final = Millivolts  # noqa: S116
+    Millivolt: Final = Millivolts  # type: ignore # noqa: S116
 
-    Amps: Final = BaseUnits.BaseCurrentUnit  # noqa: S116
-    Amp: Final = Amps  # noqa: S116
-    Milliamps: Final = (UnitBuilder(Amps).split_into(1000.0)  # noqa: S116
+    Amps: Final = BaseUnits.BaseCurrentUnit  # type: ignore # noqa: S116
+    Amp: Final = Amps  # type: ignore # noqa: S116
+    Milliamps: Final = (UnitBuilder(Amps)  # type: ignore # noqa: S116
+                        .split_into(1000.0)
                         .named("Milliamp").symbol("mA")
                         .make_and_cast(CurrentUnit))
-    Milliamp: Final = Milliamps  # noqa: S116
+    Milliamp: Final = Milliamps  # type: ignore # noqa: S116
 
-    Ohms: Final = (UnitBuilder(Volts.per(Amp))  # noqa: S116
+    Ohms: Final = (UnitBuilder(Volts.per(Amp))  # type: ignore # noqa: S116
                    .named("Ohm").symbol("\u03a9")
                    .make_and_cast(ResistanceUnit))
-    Ohm: Final = Ohms  # noqa: S116
-    KiloOhms: Final = (UnitBuilder(Ohms).aggregate(1000.0)  # noqa: S116
+    Ohm: Final = Ohms  # type: ignore # noqa: S116
+    KiloOhms: Final = (UnitBuilder(Ohms)  # type: ignore # noqa: S116
+                       .aggregate(1000.0)
                        .named("KiloOhm").symbol("k\u03a9")
                        .make_and_cast(ResistanceUnit))
-    KiloOhm: Final = KiloOhms  # noqa: S116
-    MilliOhms: Final = (UnitBuilder(Ohms).split_into(1000.0)  # noqa: S116
+    KiloOhm: Final = KiloOhms  # type: ignore # noqa: S116
+    MilliOhms: Final = (UnitBuilder(Ohms)  # type: ignore # noqa: S116
+                        .split_into(1000.0)
                         .named("MilliOhm").symbol("m\u03a9")
                         .make_and_cast(ResistanceUnit))
-    MilliOhm: Final = MilliOhms  # noqa: S116
+    MilliOhm: Final = MilliOhms  # type: ignore # noqa: S116
 
-    Joules: Final = BaseUnits.BaseEnergyUnit  # noqa: S116
-    Joule: Final = Joules  # noqa: S116
-    Millijoules: Final = (UnitBuilder(Joules).split_into(1000.0)  # noqa: S116
+    Joules: Final = BaseUnits.BaseEnergyUnit  # type: ignore # noqa: S116
+    Joule: Final = Joules  # type: ignore # noqa: S116
+    Millijoules: Final = (UnitBuilder(Joules)  # type: ignore # noqa: S116
+                          .split_into(1000.0)
                           .named("Millijoule").symbol("mJ")
                           .make_and_cast(EnergyUnit))
-    Millijoule: Final = Millijoules  # noqa: S116
-    Kilojoules: Final = (UnitBuilder(Joules).aggregate(1000.0)  # noqa: S116
+    Millijoule: Final = Millijoules  # type: ignore # noqa: S116
+    Kilojoules: Final = (UnitBuilder(Joules)  # type: ignore # noqa: S116
+                         .aggregate(1000.0)
                          .named("Kilojoule").symbol("kJ")
                          .make_and_cast(EnergyUnit))
-    Kilojoule: Final = Kilojoules  # noqa: S116
+    Kilojoule: Final = Kilojoules  # type: ignore # noqa: S116
 
-    Watts: Final = (UnitBuilder(Joules.per(Second))  # noqa: S116
-                    .named("Watt").symbol("W")
-                    .make_and_cast(PerUnit[EnergyUnit, TimeUnit]))
-    Watt: Final = Watts  # noqa: S116
-    Milliwatts: Final = (UnitBuilder(Watts).split_into(1000.0)  # noqa: S116
+    Watts: Final = (  # type: ignore # noqa: S116
+        UnitBuilder(Joules.per(Second))
+        .named("Watt").symbol("W")
+        .make_and_cast(PerUnit[EnergyUnit, TimeUnit]))
+    Watt: Final = Watts  # type: ignore # noqa: S116
+    Milliwatts: Final = (UnitBuilder(Watts)  # type: ignore # noqa: S116
+                         .split_into(1000.0)
                          .named("Milliwatt").symbol("mW")
                          .make_and_cast(PerUnit[EnergyUnit, TimeUnit]))
-    Milliwatt: Final = Milliwatts  # noqa: S116
-    Horsepower: Final = (UnitBuilder(Watts).aggregate(745.7)  # noqa: S116
+    Milliwatt: Final = Milliwatts  # type: ignore # noqa: S116
+    Horsepower: Final = (UnitBuilder(Watts)  # type: ignore # noqa: S116
+                         .aggregate(745.7)
                          .named("Horsepower").symbol("HP")
                          .make_and_cast(PerUnit[EnergyUnit, TimeUnit]))
 
-    Kelvin: Final = BaseUnits.BaseTemperatureUnit  # noqa: S116
-    Celsius: Final = (UnitBuilder(Kelvin).offset(273.15)  # noqa: S116
+    Kelvin: Final = BaseUnits.BaseTemperatureUnit  # type: ignore # noqa: S116
+    Celsius: Final = (UnitBuilder(Kelvin)  # type: ignore # noqa: S116
+                      .offset(273.15)
                       .named("Celsius").symbol("\xb0C")
                       .make_and_cast(TemperatureUnit))
-    Fahrenheit: Final = (UnitBuilder(Celsius)  # noqa: S116
+    Fahrenheit: Final = (UnitBuilder(Celsius)  # type: ignore # noqa: S116
                          .mapping_input_range(0.0, 100.0)
                          .to_output_range(32.0, 212.0)
                          .named("Fahrenheit").symbol("\xb0F")
                          .make_and_cast(TemperatureUnit))
 
-    VoltsPerMeterPerSecond: Final = (Volts.per(MetersPerSecond)  # noqa: S116
-                                     .cast(PerUnit[
-                                         VoltageUnit,
-                                         LinearVelocityUnit[DistanceUnit]
-                                     ]))
+    VoltsPerMeterPerSecond: Final = (  # type: ignore # noqa: S116
+        Volts.per(MetersPerSecond)
+        .cast(PerUnit[
+            VoltageUnit,
+            LinearVelocityUnit[DistanceUnit]
+        ]))
 
-    VoltsPerMeterPerSecondSquared: Final = (  # noqa: S116
+    VoltsPerMeterPerSecondSquared: Final = (  # type: ignore # noqa: S116
         Volts.per(MetersPerSecondPerSecond).cast(PerUnit[
             VoltageUnit,
             LinearAccelerationUnit[LinearVelocityUnit[DistanceUnit]]
         ])
     )
-    VoltsPerRadianPerSecond: Final = (Volts.per(RadiansPerSecond)  # noqa: S116
-                                      .cast(PerUnit[
-                                          VoltageUnit,
-                                          AngularVelocityUnit[AngleUnit]
-                                      ]))
-    VoltsPerRadianPerSecondSquared: Final = (  # noqa: S116
+    VoltsPerRadianPerSecond: Final = (  # type: ignore # noqa: S116
+        Volts.per(RadiansPerSecond)
+        .cast(PerUnit[
+            VoltageUnit,
+            AngularVelocityUnit[AngleUnit]
+        ]))
+    VoltsPerRadianPerSecondSquared: Final = (  # type: ignore # noqa: S116
         Volts.per(RadiansPerSecond.per(Second)).cast(PerUnit[
             VoltageUnit,
             AngularAccelerationUnit[AngularVelocityUnit[AngleUnit]]
