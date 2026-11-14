@@ -1,12 +1,25 @@
 from __future__ import annotations
 
+import copy
 import locale
 import math
 from collections.abc import Callable
-from typing import Any, Final, Self, TypeVar, cast
+from typing import (
+    Any,
+    Final,
+    NoReturn,
+    Self,
+    TypedDict,
+    TypeVar,
+    Unpack,
+    cast,
+    final,
+    overload,
+)
 
 from .collections import LongToObjectHashMap
 from .measure import (
+    Acceleration,
     Angle,
     AngularAcceleration,
     AngularMomentum,
@@ -42,12 +55,16 @@ Out = TypeVar("Out", bound="Unit")
 
 
 def _locale_invariant_lower(string: str):
-    nowlocale = locale.getlocale(locale.LC_ALL)
+    try:
+        nowlocale = locale.getlocale()
+    except TypeError:
+        nowlocale = None
     locale.setlocale(locale.LC_ALL, "C")
     try:
         return string.lower()
     finally:
-        locale.setlocale(locale.LC_ALL, nowlocale)
+        if nowlocale is not None:
+            locale.setlocale(locale.LC_ALL, nowlocale)
 
 
 class UnaryFunction:
@@ -63,7 +80,7 @@ class UnaryFunction:
 
     @staticmethod
     def _identity(x: float) -> float:
-        return x
+        return float(x)
 
     def pipe_to(self, next_func: UnaryFunction) -> UnaryFunction:
         if next_func is None:
@@ -85,13 +102,18 @@ class UnaryFunction:
             )
 
     def div(self, divisor: UnaryFunction | float) -> UnaryFunction:
-        if isinstance(divisor, UnaryFunction):
-            return UnaryFunction(lambda x: (
-                0.0 if self.apply(x) == 0
-                else self.apply(x) / divisor.apply(x)
-            ))
-        else:
-            return UnaryFunction(lambda x: self.apply(x) / divisor)
+        def _div(x: float) -> float:
+            n = self.apply(x)
+            d = (
+                divisor if isinstance(divisor, (float, int))
+                else divisor.apply(x))
+            if n == 0:
+                return 0
+            if d == 0:
+                # strange div by 0 case but whatever
+                return math.inf * math.copysign(1.0, n)
+            return n / d
+        return UnaryFunction(_div)
 
     def exp(self, exponent: UnaryFunction | float) -> UnaryFunction:
         if isinstance(exponent, UnaryFunction):
@@ -112,50 +134,107 @@ UnaryFunction.IDENTITY = (
 class Unit:
     """Unit of measurement that defines a quantity."""
 
-    def __init__(
-        self,
-        base_unit: Unit | None,
-        to_base_converter: UnaryFunction | float,
-        from_base_converter: UnaryFunction | float,
-        name: str | None,
-        symbol: str | None,
-    ) -> None:
+    class UnitConstructorArgs(TypedDict):
+        base_unit: Unit | None
+        """ The base unit """
+        to_base_converter: UnaryFunction
+        """ Used to convert units of this type to the base unit """
+        from_base_converter: UnaryFunction
+        """ Used to convert base units to units of this type """
+        unit_name: str | None
+        """ Unit name (singular noun) """
+        unit_symbol: str | None
+        """ Unit symbol """
+
+    class UnitConstructorArgsUsingMultiplier(TypedDict):
+        base_unit: Unit | None
+        """ The base unit """
+        base_unit_equivalent: float
+        """ Multiplier to convert this unit *to* the base unit """
+        unit_name: str | None
+        """ Unit name (singular noun) """
+        unit_symbol: str | None
+        """ Unit symbol """
+
+    @overload
+    def __init__(self, **kwargs: Unpack[UnitConstructorArgs]):
+        ...
+
+    @overload
+    def __init__(self, **kwargs: Unpack[UnitConstructorArgsUsingMultiplier]):
+        ...
+
+    def __init__(self, **kwargs) -> None:
+        base_unit = kwargs["base_unit"]
+        to_base_converter = kwargs.get("to_base_converter")
+        from_base_converter = kwargs.get("from_base_converter")
+        unit_name = kwargs["unit_name"]
+        unit_symbol = kwargs["unit_symbol"]
+        base_equivalent = kwargs.get("base_unit_equivalent")
+
         self._base_unit = base_unit if base_unit is not None else self
 
-        if isinstance(to_base_converter, (int, float)):
-            eq = float(to_base_converter)
-            self._to_base_converter = UnaryFunction(lambda x: x * eq)
-            self._from_base_converter = UnaryFunction(lambda x: x / eq)
-        else:
-            self._to_base_converter = to_base_converter
-            self._from_base_converter = (
-                from_base_converter
-                if isinstance(from_base_converter, UnaryFunction)
-                else UnaryFunction(lambda x: x)
+        if (
+            base_equivalent is not None
+            and (
+                to_base_converter is not None
+                or from_base_converter is not None
+            )
+        ):
+            raise TypeError(
+                "base_equivalent cannot be used with "
+                "to/from_base_converter"
             )
 
-        self._name: str = name or "(Unknown Unit)"
-        self._symbol: str = symbol or "(Unknown Symbol)"
-        self._zero = self.of(0.0)
-        self._one = self.of(1.0)
+        self._to_base_converter: UnaryFunction
+        self._from_base_converter: UnaryFunction
 
-    def of(self, magnitude: float) -> ImmutableMeasure[Unit] | Per[Unit, Unit]:
-        raise NotImplementedError
+        if isinstance(to_base_converter, UnaryFunction):
+            if not isinstance(from_base_converter, UnaryFunction):
+                raise TypeError(
+                    "from_base_converter must be a UnaryFunction|float."
+                )
+
+            self._to_base_converter = to_base_converter
+            self._from_base_converter = from_base_converter
+        elif isinstance(base_equivalent, (float, int)):
+            equiv = float(base_equivalent)
+            self._to_base_converter = UnaryFunction(lambda x: x * equiv)
+            self._from_base_converter = UnaryFunction(lambda x: x / equiv)
+
+        if unit_name is None:
+            raise ValueError("unit_name must not be None.")
+        if unit_symbol is None:
+            raise ValueError("unit_symbol must not be None.")
+
+        self._name: str = unit_name
+        self._symbol: str = unit_symbol
+
+        self._zero: Measure = self.of(0.0)
+        self._one: Measure = self.of(1.0)
+
+    def _raiseTypeErrorPer(self, other_type: Any) -> NoReturn:  # noqa: S100
+        raise TypeError(f"per: other must be a unit, got {type(other_type)}")
+
+    def of(self, magnitude: float) -> ImmutableMeasure[Self] | Per[Unit, Unit]:
+        raise NotImplementedError("Unit.of()")
 
     def of_base_units(
         self,
         base_unit_magnitude: float
-    ) -> ImmutableMeasure[Unit] | Per[Unit, Unit]:
-        raise NotImplementedError
+    ) -> ImmutableMeasure[Self] | Per[Unit, Unit]:
+        raise NotImplementedError("Unit.of_base_unit()")
 
-    def zero(self) -> ImmutableMeasure[Unit]:
+    def zero(self) -> Measure[Self] | ImmutableMeasure[Self]:
         return self._zero
 
-    def one(self) -> ImmutableMeasure[Unit]:
+    def one(self) -> Measure[Self] | ImmutableMeasure[Self]:
         return self._one
 
-    def per[U: Unit](self, other: U) -> Any | PerUnit[Self, U]:
-        raise NotImplementedError
+    def per[U: Unit](self, other: U) -> PerUnit[Self, U]:
+        if not isinstance(other, Unit):
+            self._raiseTypeErrorPer(other)
+        return PerUnit.combine(self, other)
 
     def get_base_unit(self) -> Self:
         return cast(Self, self._base_unit)
@@ -176,8 +255,10 @@ class Unit:
         return self._from_base_converter
 
     def equivalent(self, other: Unit) -> bool:
-        if isinstance(other, type(self)):
+        if not isinstance(other, Unit):
             return False
+        if self is other:
+            return True
         arbitrary = 16777.214
         return (
             abs(
@@ -192,16 +273,19 @@ class Unit:
             <= Measure.EQUIVALENCE_THRESHOLD
         )
 
-    def mult(self, other: Unit) -> Unit:
-        raise NotImplementedError
+    def mult[O: Unit](self, other: O) -> MultUnit[Self, O]:
+        raise NotImplementedError("Unit.mult()")
 
     def __eq__(self, o: object) -> bool:
-        return (
-            self is o
-            or isinstance(o, Unit)
+        return self is o or (
+            isinstance(o, Unit)
             and self._name == o._name
             and self._symbol == o._symbol
             and self.equivalent(o)
+        ) or (
+            isinstance(o, Unit)
+            and Unit._unit_signature(o) == Unit._unit_signature(self) and
+            self.equivalent(o)
         )
 
     def __hash__(self) -> int:
@@ -213,16 +297,34 @@ class Unit:
         ))
 
     def name(self) -> str:
-        return self._name
+        return self._name.strip()
 
     def symbol(self) -> str:
-        return self._symbol
+        return self._symbol.strip()
 
     def cast[U: Unit](self, typecast: type[U]) -> U:
         return cast(typecast, self)  # type: ignore
 
     def __str__(self) -> str:
         return self.name()
+
+    @classmethod
+    def _unit_signature(cls, other: Unit) -> dict[type[Unit], int]:
+        if isinstance(other, MultUnit):
+            result = cls._unit_signature(other.unit_a())
+            for atom, power in cls._unit_signature(other.unit_b()).items():
+                result[atom] = result.get(atom, 0) + power
+            return {atom: power for atom, power in result.items() if power}
+
+        if isinstance(other, PerUnit):
+            result = cls._unit_signature(other.numerator())
+            for atom, power in (
+                cls._unit_signature(other.denominator()).items()
+            ):
+                result[atom] = result.get(atom, 0) - power
+            return {atom: power for atom, power in result.items() if power}
+
+        return {type(other): 1}
 
 
 class CombinatoryUnitCache[A, B, Out]:
@@ -236,12 +338,23 @@ class CombinatoryUnitCache[A, B, Out]:
         self._constructor = constructor
 
     def combine(self, a: A, b: B) -> Out:
+        if not isinstance(a, Unit):
+            raise TypeError(
+                "CombinatoryUnitCache.combine: a must be a unit, "
+                f"got {type(a)}"
+            )
+        if not isinstance(b, Unit):
+            raise TypeError(
+                "CombinatoryUnitCache.combine: b must be a unit, "
+                f"got {type(b)}"
+            )
+
         key = (hash(a) << 32) | (hash(b) & 0xFFFFFFFF)
         existing = self._cache.get(key)
         if existing is not None:
             return existing
 
-        new_unit = self._constructor(a, b)
+        new_unit = self._constructor(a, b)  # type: ignore[arg-type]
         self._cache.put(key, new_unit)
         return new_unit
 
@@ -256,9 +369,9 @@ class UnitBuilder[A: Unit]:
         self._m_name: str | None = None
         self._m_symbol: str | None = None
 
-    def offset(self, offset_val: float) -> UnitBuilder[A]:
-        self._m_to_base = UnaryFunction(lambda x: x + offset_val)
-        self._m_from_base = UnaryFunction(lambda x: x - offset_val)
+    def offset(self, offset_val: float) -> Self:
+        self._m_to_base = UnaryFunction(lambda x: x + float(offset_val))
+        self._m_from_base = UnaryFunction(lambda x: x - float(offset_val))
         return self
 
     class MappingBuilder:
@@ -283,8 +396,10 @@ class UnitBuilder[A: Unit]:
                 out_max: float
             ) -> float:
                 return (
-                    (v - in_min) * (out_max - out_min) / (in_max - in_min)
-                    + out_min
+                    (float(v) - float(in_min))
+                    * (float(out_max) - float(out_min))
+                    / (float(in_max) - float(in_min))
+                    + float(out_min)
                 )
 
             self._outer._m_from_base = UnaryFunction(
@@ -304,19 +419,19 @@ class UnitBuilder[A: Unit]:
     ) -> MappingBuilder:
         return UnitBuilder.MappingBuilder(self, min_base, max_base)
 
-    def from_base(self, from_base: UnaryFunction) -> UnitBuilder[A]:
+    def from_base(self, from_base: UnaryFunction) -> Self:
         self._m_from_base = from_base
         return self
 
-    def to_base(self, to_base: UnaryFunction) -> UnitBuilder[A]:
+    def to_base(self, to_base: UnaryFunction) -> Self:
         self._m_to_base = to_base
         return self
 
-    def named(self, name: str) -> UnitBuilder[A]:
+    def named(self, name: str) -> Self:
         self._m_name = name
         return self
 
-    def symbol(self, symbol: str) -> UnitBuilder[A]:
+    def symbol(self, symbol: str) -> Self:
         self._m_symbol = symbol
         return self
 
@@ -324,18 +439,18 @@ class UnitBuilder[A: Unit]:
         if fraction == 0:
             raise ValueError("Fraction must be nonzero")
         return self.to_base(
-            UnaryFunction(lambda x: x / fraction)
+            UnaryFunction(lambda x: x / float(fraction))
         ).from_base(
-            UnaryFunction(lambda b: b * fraction)
+            UnaryFunction(lambda b: b * float(fraction))
         )
 
     def aggregate(self, aggregation: float) -> UnitBuilder[A]:
         if aggregation == 0:
             raise ValueError("Aggregation amount must be nonzero")
         return self.to_base(
-            UnaryFunction(lambda x: x * aggregation)
+            UnaryFunction(lambda x: x * float(aggregation))
         ).from_base(
-            UnaryFunction(lambda b: b / aggregation)
+            UnaryFunction(lambda b: b / float(aggregation))
         )
 
     def make(
@@ -357,10 +472,53 @@ class UnitBuilder[A: Unit]:
             return constructor(
                 base_unit, to_base, from_base, self._m_name, self._m_symbol
             )
-        else:
-            return type(self._m_base)(
-                base_unit, to_base, from_base, self._m_name, self._m_symbol
-            )
+
+        built: Unit
+        if isinstance(self._m_base, PerUnit):
+            if type(self._m_base) is PerUnit:
+                built = PerUnit(None, self._m_base.numerator(),
+                                self._m_base.denominator())
+            else:
+                built = type(self._m_base)(  # type: ignore
+                    self._m_base.numerator(),
+                    self._m_base.denominator()
+                )
+            built._to_base_converter = to_base
+            built._from_base_converter = from_base
+            built._name = self._m_name
+            built._symbol = self._m_symbol
+            built._zero = built.of(0.0)
+            built._one = built.of(1.0)
+            return built
+
+        if isinstance(self._m_base, MultUnit):
+            if type(self._m_base) is MultUnit:
+                built = MultUnit(None,
+                                 self._m_base.unit_a(),
+                                 self._m_base.unit_b())
+            else:
+                built = type(self._m_base)(  # type: ignore
+                    self._m_base.unit_a(),
+                    self._m_base.unit_b()
+                )
+            built._to_base_converter = to_base
+            built._from_base_converter = from_base
+            built._name = self._m_name
+            built._symbol = self._m_symbol
+            built._zero = built.of(0.0)
+            built._one = built.of(1.0)
+            return built
+
+        built = copy.copy(self._m_base)
+        Unit.__init__(
+            built,
+            base_unit=base_unit,
+            to_base_converter=to_base,
+            from_base_converter=from_base,
+            unit_name=self._m_name,
+            unit_symbol=self._m_symbol
+        )
+        return built
 
     def make_and_cast[T: Unit](
         self,
@@ -373,25 +531,13 @@ class UnitBuilder[A: Unit]:
 
 
 class DimensionlessUnit(Unit):
-    def __init__(
-        self,
-        base_unit: DimensionlessUnit | None,
-        to_base: Any,
-        from_base_or_name: Any,
-        name: str | None = None,
-        symbol: str | None = None,
-    ) -> None:
-        super().__init__(base_unit,
-                         to_base, from_base_or_name,
-                         name, symbol)
-
-    def get_base_unit(self) -> DimensionlessUnit:
+    def get_base_unit(self) -> Self:
         return super().get_base_unit()
 
-    def of(self, magnitude: float) -> Dimensionless:
+    def of(self, magnitude: float) -> Dimensionless:  # type: ignore
         return Dimensionless(magnitude, self.to_base_units(magnitude), self)
 
-    def of_base_units(
+    def of_base_units(  # type: ignore
         self,
         base_unit_magnitude: float
     ) -> Dimensionless:
@@ -401,10 +547,10 @@ class DimensionlessUnit(Unit):
             self
         )
 
-    def zero(self) -> Dimensionless:
+    def zero(self) -> Dimensionless:  # type: ignore
         return cast(Dimensionless, super().zero())
 
-    def one(self) -> Dimensionless:
+    def one(self) -> Dimensionless:  # type: ignore
         return cast(Dimensionless, super().one())
 
     def convert_from(
@@ -414,36 +560,38 @@ class DimensionlessUnit(Unit):
     ) -> float:
         return self.from_base_units(other_unit.to_base_units(magnitude))
 
-    def per[U: Unit](
-        self, other: U
-    ) -> FrequencyUnit | PerUnit[DimensionlessUnit, U]:
+    @overload
+    def per(self, other: TimeUnit) -> FrequencyUnit: ...
+
+    @overload
+    def per[O: Unit](self, unit: O) -> PerUnit[Self, O]: ...
+
+    def per(  # type: ignore
+        self, other
+    ):
         if isinstance(other, TimeUnit):
             return cast(FrequencyUnit, FrequencyUnit.combine(self, other))
-        return self.per_unit(other)
+        return super().per(other)
 
-    def per_unit[U: Unit](self, other: U) -> PerUnit[DimensionlessUnit, U]:
+    def per_unit[U: Unit](self, other: U) -> PerUnit[Self, U]:
         return PerUnit.combine(self, other)
 
 
 class TimeUnit(Unit):
-    def __init__(
-        self,
-        base_unit: TimeUnit | None,
-        to_base: Any,
-        from_base_or_name: Any,
-        name: str | None = None,
-        symbol: str | None = None,
-    ) -> None:
-        super().__init__(base_unit, to_base, from_base_or_name, name, symbol)
-
     def get_base_unit(self) -> TimeUnit:
         return super().get_base_unit()
 
-    def per[U: Unit](
-        self, other: U
-    ) -> DimensionlessUnit | PerUnit[TimeUnit, U]:
+    @overload
+    def per(self, other: TimeUnit) -> DimensionlessUnit: ...  # type: ignore
+
+    @overload
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]: ...
+
+    def per(  # type: ignore
+        self, other
+    ):
         if isinstance(other, TimeUnit):
-            val = Units.derive(Units.Value).to_base(
+            return Units.derive(Units.Value).to_base(
                 self.get_converter_to_base().div(
                     other.get_converter_to_base())
             ).from_base(
@@ -452,19 +600,18 @@ class TimeUnit(Unit):
             ).named(self.name() + " per " + other.name()).symbol(
                 self.symbol() + "/" + other.symbol()
             ).make()
-            return cast(DimensionlessUnit, val)
-        return self.per_unit(other)
+        return super().per(other)
 
-    def per_unit[U: Unit](self, other: U) -> PerUnit[TimeUnit, U]:
+    def per_unit[U: Unit](self, other: U) -> PerUnit[Self, U]:
         return PerUnit.combine(self, other)
 
     def convert_from(self, magnitude: float, other_unit: TimeUnit) -> float:
         return self.from_base_units(other_unit.to_base_units(magnitude))
 
-    def of(self, magnitude: float) -> Time:
+    def of(self, magnitude: float) -> Time:  # type: ignore
         return Time(magnitude, self.to_base_units(magnitude), self)
 
-    def of_base_units(
+    def of_base_units(  # type: ignore
         self,
         base_unit_magnitude: float
     ) -> Time:
@@ -482,27 +629,23 @@ class TimeUnit(Unit):
 
 
 class DistanceUnit(Unit):
-    def __init__(
-        self,
-        base_unit: DistanceUnit | None,
-        to_base: Any,
-        from_base_or_name: Any,
-        name: str | None = None,
-        symbol: str | None = None,
-    ) -> None:
-        super().__init__(base_unit, to_base, from_base_or_name, name, symbol)
-
     def get_base_unit(self) -> DistanceUnit:
         return super().get_base_unit()
 
-    def per[U: Unit](
-        self, other: U
-    ) -> LinearVelocityUnit[DistanceUnit] | PerUnit[DistanceUnit, U]:
+    @overload
+    def per(self, other: TimeUnit) -> LinearVelocityUnit[Self]: ...
+
+    @overload
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]: ...
+
+    def per(  # type: ignore
+        self, other
+    ):
         if isinstance(other, TimeUnit):
             return LinearVelocityUnit.combine(self, other)
         return self.per_unit(other)
 
-    def per_unit[U: Unit](self, other: U) -> PerUnit[DistanceUnit, U]:
+    def per_unit[U: Unit](self, other: U) -> PerUnit[Self, U]:
         return PerUnit.combine(self, other)
 
     def convert_from(
@@ -512,10 +655,10 @@ class DistanceUnit(Unit):
     ) -> float:
         return self.from_base_units(other_unit.to_base_units(magnitude))
 
-    def of(self, magnitude: float) -> Distance:
+    def of(self, magnitude: float) -> Distance:  # type: ignore
         return Distance(magnitude, self.to_base_units(magnitude), self)
 
-    def of_base_units(
+    def of_base_units(  # type: ignore
         self,
         base_unit_magnitude: float
     ) -> Distance:
@@ -538,33 +681,23 @@ class DistanceUnit(Unit):
             LinearAccelerationUnit[LinearVelocityUnit[DistanceUnit]]
         ]
     ) -> TorqueUnit[
-        DistanceUnit,
+        Self,
         ForceUnit[
             MassUnit,
-            LinearAccelerationUnit[LinearVelocityUnit[DistanceUnit]]
+            LinearAccelerationUnit[LinearVelocityUnit[Self]]
         ]
     ]:
         return TorqueUnit.combine(self, force)
 
 
 class MassUnit(Unit):
-    def __init__(
-        self,
-        base_unit: MassUnit | None,
-        to_base: Any,
-        from_base_or_name: Any,
-        name: str | None = None,
-        symbol: str | None = None,
-    ) -> None:
-        super().__init__(base_unit, to_base, from_base_or_name, name, symbol)
-
     def get_base_unit(self) -> MassUnit:
         return super().get_base_unit()
 
-    def of(self, magnitude: float) -> Mass:
+    def of(self, magnitude: float) -> Mass:  # type: ignore
         return Mass(magnitude, self.to_base_units(magnitude), self)
 
-    def of_base_units(
+    def of_base_units(  # type: ignore
         self,
         base_unit_magnitude: float
     ) -> Mass:
@@ -580,12 +713,16 @@ class MassUnit(Unit):
     def one(self) -> Mass:
         return cast(Mass, super().one())
 
-    def per[U: Unit](
-        self, other: U
-    ) -> VelocityUnit[MassUnit] | PerUnit[MassUnit, U]:
+    @overload
+    def per(self, other: TimeUnit) -> VelocityUnit[Self]: ...
+
+    @overload
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]: ...
+
+    def per(self, other):  # type: ignore
         if isinstance(other, TimeUnit):
             return VelocityUnit.combine(self, other)
-        return self.per_unit(other)
+        return super().per(other)
 
     def per_unit[U: Unit](self, other: U) -> PerUnit[MassUnit, U]:
         return PerUnit.combine(self, other)
@@ -593,45 +730,54 @@ class MassUnit(Unit):
     def convert_from(self, magnitude: float, other_unit: MassUnit) -> float:
         return self.from_base_units(other_unit.to_base_units(magnitude))
 
-    def mult(self, other: Unit) -> Unit:
+    @overload
+    def mult[O: LinearVelocityUnit](
+        self, other: O
+    ) -> LinearMomentumUnit[Self, O]: ...
+
+    @overload
+    def mult[O: LinearAccelerationUnit](
+        self, other: O
+    ) -> ForceUnit[Self, O]: ...
+
+    @overload
+    def mult[O: Unit](self, other: O) -> MultUnit[Self, O]: ...
+
+    def mult(self, other):  # type: ignore
         if isinstance(other, LinearVelocityUnit):
             return LinearMomentumUnit.combine(self, other)
         elif isinstance(other, LinearAccelerationUnit):
             return ForceUnit.combine(self, other)
-        raise TypeError("Invalid argument for mult")
+        raise TypeError(f"Invalid argument for mult: {type(other)}")
 
 
 class AngleUnit(Unit):
-    def __init__(
-        self,
-        base_unit: AngleUnit | None,
-        to_base: Any,
-        from_base_or_name: Any,
-        name: str | None = None,
-        symbol: str | None = None,
-    ) -> None:
-        super().__init__(base_unit, to_base, from_base_or_name, name, symbol)
-
     def get_base_unit(self) -> AngleUnit:
         return super().get_base_unit()
 
-    def of(self, magnitude: float) -> Angle:
+    def of(self, magnitude: float) -> Angle:  # type: ignore
         return Angle.of_relative_units(magnitude, self)
 
-    def of_base_units(
+    def of_base_units(  # type: ignore
         self,
         base_unit_magnitude: float
     ) -> Angle:
         return Angle.of_base_units(base_unit_magnitude, self)
 
-    def per[U: Unit](
-        self, other: U
-    ) -> AngularVelocityUnit[AngleUnit] | PerUnit[AngleUnit, U]:
+    @overload
+    def per(self, other: TimeUnit) -> AngularVelocityUnit[Self]: ...
+
+    @overload
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]: ...
+
+    def per(  # type: ignore
+        self, other
+    ):
         if isinstance(other, TimeUnit):
             return AngularVelocityUnit.combine(self, other)
-        return self.per_unit(other)
+        return super().per(other)
 
-    def per_unit[U: Unit](self, other: U) -> PerUnit[AngleUnit, U]:
+    def per_unit[U: Unit](self, other: U) -> PerUnit[Self, U]:
         return PerUnit.combine(self, other)
 
     def convert_from(self, magnitude: float, other_unit: AngleUnit) -> float:
@@ -645,30 +791,20 @@ class AngleUnit(Unit):
 
 
 class VoltageUnit(Unit):
-    def __init__(
-        self,
-        base_unit: VoltageUnit | None,
-        to_base: Any,
-        from_base_or_name: Any,
-        name: str | None = None,
-        symbol: str | None = None,
-    ) -> None:
-        super().__init__(base_unit, to_base, from_base_or_name, name, symbol)
-
     def get_base_unit(self) -> VoltageUnit:
         return super().get_base_unit()
 
-    def mult(  # type: ignore[override]
-        self, current: CurrentUnit, name: str, symbol: str  # noqa: S2638
-    ) -> PowerUnit:
+    def mult[O: CurrentUnit](  # type: ignore[override]
+        self, current: O, name: str, symbol: str  # noqa: S2638
+    ) -> PowerUnit[Self, O]:
         return cast(PowerUnit, Units.derive(
             PowerUnit.combine(self, current)
         ).named(name).symbol(symbol).make())
 
-    def of(self, magnitude: float) -> Voltage:
+    def of(self, magnitude: float) -> Voltage:  # type: ignore
         return Voltage(magnitude, self.to_base_units(magnitude), self)
 
-    def of_base_units(
+    def of_base_units(  # type: ignore
         self,
         base_unit_magnitude: float
     ) -> Voltage:
@@ -684,18 +820,21 @@ class VoltageUnit(Unit):
     def one(self) -> Voltage:
         return cast(Voltage, super().one())
 
-    def per(
-        self, other: Unit
-    ) -> (
-        ResistanceUnit
-        | VelocityUnit[VoltageUnit]
-        | PerUnit[VoltageUnit, Unit]
-    ):
+    @overload
+    def per(self, other: CurrentUnit) -> ResistanceUnit: ...
+
+    @overload
+    def per(self, other: TimeUnit) -> VelocityUnit[Self]: ...
+
+    @overload
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]: ...
+
+    def per(self, other):  # type: ignore
         if isinstance(other, CurrentUnit):
             return ResistanceUnit.combine(self, other)
         elif isinstance(other, TimeUnit):
             return VelocityUnit.combine(self, other)
-        return self.per_unit(other)
+        return super().per(other)
 
     def per_unit[U: Unit](self, other: U) -> PerUnit[VoltageUnit, U]:
         return PerUnit.combine(self, other)
@@ -705,16 +844,6 @@ class VoltageUnit(Unit):
 
 
 class CurrentUnit(Unit):
-    def __init__(
-        self,
-        base_unit: CurrentUnit | None,
-        to_base: Any,
-        from_base_or_name: Any,
-        name: str | None = None,
-        symbol: str | None = None,
-    ) -> None:
-        super().__init__(base_unit, to_base, from_base_or_name, name, symbol)
-
     def get_base_unit(self) -> CurrentUnit:
         return super().get_base_unit()
 
@@ -729,14 +858,16 @@ class CurrentUnit(Unit):
                 "This implementation of mult "
                 "may not be the one you're looking for..."
             )
-        return cast(PowerUnit, Units.derive(
-            PowerUnit.combine(voltage, self)
-        ).named(name).symbol(symbol).make())
+        if isinstance(voltage, VoltageUnit):
+            return cast(PowerUnit, Units.derive(
+                PowerUnit.combine(voltage, self)
+            ).named(name).symbol(symbol).make())
+        raise TypeError("first parameter must be a VoltageUnit")
 
-    def of(self, magnitude: float) -> Current:
+    def of(self, magnitude: float) -> Current:  # type: ignore
         return Current(magnitude, self.to_base_units(magnitude), self)
 
-    def of_base_units(
+    def of_base_units(  # type: ignore
         self,
         base_unit_magnitude: float
     ) -> Current:
@@ -752,12 +883,16 @@ class CurrentUnit(Unit):
     def one(self) -> Current:
         return cast(Current, super().one())
 
-    def per(
-        self, other: Unit
-    ) -> VelocityUnit[CurrentUnit] | PerUnit[CurrentUnit, Unit]:
+    @overload
+    def per(self, other: TimeUnit) -> VelocityUnit[CurrentUnit]: ...
+
+    @overload
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]: ...
+
+    def per(self, other):  # type: ignore
         if isinstance(other, TimeUnit):
             return VelocityUnit.combine(self, other)
-        return self.per_unit(other)
+        return super().per(other)
 
     def per_unit[U: Unit](self, other: U) -> PerUnit[CurrentUnit, U]:
         return PerUnit.combine(self, other)
@@ -767,23 +902,23 @@ class CurrentUnit(Unit):
 
 
 class EnergyUnit(Unit):
-    def __init__(
-        self,
-        base_unit: EnergyUnit | None,
-        to_base: Any,
-        from_base_or_name: Any,
-        name: str | None = None,
-        symbol: str | None = None,
-    ) -> None:
-        super().__init__(base_unit, to_base, from_base_or_name, name, symbol)
-
     def get_base_unit(self) -> EnergyUnit:
         return super().get_base_unit()
 
-    def per[U: Unit](self, other: U) -> PowerUnit | PerUnit[EnergyUnit, U]:
+    @overload
+    def per(self, other: TimeUnit) -> PowerUnit: ...  # type: ignore
+
+    @overload
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]: ...
+
+    def per[U: Unit](  # type: ignore
+        self, other: U
+    ) -> PowerUnit | PerUnit[EnergyUnit, U]:
         if isinstance(other, TimeUnit):
             return PowerUnit.combine(self, other)
-        return self.per_unit(other)
+        if isinstance(other, Unit):
+            return self.per_unit(other)
+        self._raiseTypeErrorPer(other)
 
     def per_unit[U: Unit](self, other: U) -> PerUnit[EnergyUnit, U]:
         return PerUnit.combine(self, other)
@@ -791,10 +926,10 @@ class EnergyUnit(Unit):
     def convert_from(self, magnitude: float, other_unit: EnergyUnit) -> float:
         return self.from_base_units(other_unit.to_base_units(magnitude))
 
-    def of(self, magnitude: float) -> Energy:
+    def of(self, magnitude: float) -> Energy:  # type: ignore
         return Energy(magnitude, self.to_base_units(magnitude), self)
 
-    def of_base_units(
+    def of_base_units(  # type: ignore
         self,
         base_unit_magnitude: float
     ) -> Energy:
@@ -812,23 +947,13 @@ class EnergyUnit(Unit):
 
 
 class TemperatureUnit(Unit):
-    def __init__(
-        self,
-        base_unit: TemperatureUnit | None,
-        to_base: Any,
-        from_base_or_name: Any,
-        name: str | None = None,
-        symbol: str | None = None,
-    ) -> None:
-        super().__init__(base_unit, to_base, from_base_or_name, name, symbol)
-
     def get_base_unit(self) -> TemperatureUnit:
         return super().get_base_unit()
 
-    def of(self, magnitude: float) -> Temperature:
+    def of(self, magnitude: float) -> Temperature:  # type: ignore
         return Temperature(magnitude, self.to_base_units(magnitude), self)
 
-    def of_base_units(
+    def of_base_units(  # type: ignore
         self,
         base_unit_magnitude: float
     ) -> Temperature:
@@ -844,12 +969,16 @@ class TemperatureUnit(Unit):
     def one(self) -> Temperature:
         return cast(Temperature, super().one())
 
-    def per[U: Unit](
-        self, other: U
-    ) -> VelocityUnit[TemperatureUnit] | PerUnit[TemperatureUnit, U]:
+    @overload
+    def per(self, other: TimeUnit) -> VelocityUnit[TemperatureUnit]: ...
+
+    @overload
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]: ...
+
+    def per(self, other):  # type: ignore
         if isinstance(other, TimeUnit):
             return VelocityUnit.combine(self, other)
-        return self.per_unit(other)
+        return super().per(other)
 
     def per_unit[U: Unit](self, other: U) -> PerUnit[TemperatureUnit, U]:
         return PerUnit.combine(self, other)
@@ -863,20 +992,27 @@ class TemperatureUnit(Unit):
 class PerUnit[A: Unit, B: Unit](Unit):
     def __init__(
         self,
-        base_unit: PerUnit[A, B] | None,
+        base_unit: Unit | PerUnit[A, B] | None,
         numerator: A,
         denominator: B,
     ) -> None:
         self._m_numerator = numerator
         self._m_denominator = denominator
         super().__init__(
-            base_unit,
-            numerator.to_base_units(1.0) / denominator.to_base_units(1.0),
-            numerator.from_base_units(1.0) * denominator.to_base_units(1.0),
-            numerator.name() + " per " + denominator.name(),
-            numerator.symbol() + "/" + denominator.symbol(),
+            base_unit=base_unit,
+            to_base_converter=UnaryFunction(lambda x: (
+                x * (
+                    numerator.to_base_units(1.0)
+                    / denominator.to_base_units(1.0)))),
+            from_base_converter=UnaryFunction(lambda x: (
+                x * (
+                    numerator.from_base_units(1.0)
+                    * denominator.to_base_units(1.0)))),
+            unit_name=numerator.name() + " per " + denominator.name(),
+            unit_symbol=numerator.symbol() + "/" + denominator.symbol(),
         )
         self._base_unit = base_unit if base_unit is not None else self
+        self._source: str = ""
 
     def get_base_unit(self) -> PerUnit[A, B]:
         return super().get_base_unit()
@@ -911,21 +1047,29 @@ class PerUnit[A: Unit, B: Unit](Unit):
             .make()
         )
 
-    def of(self, magnitude: float) -> Per[A, B]:
-        return self.of_native(magnitude)
+    def of(self, magnitude: float) -> Per[A, B]:  # type: ignore
+        try:
+            return self.of_native(magnitude)
+        finally:
+            self._source = "of"
 
-    def of_base_units(
+    def of_base_units(  # type: ignore
         self,
         base_unit_magnitude: float
     ) -> Per[A, B]:
-        return self.of_native_base_units(base_unit_magnitude)
+        try:
+            return self.of_native_base_units(base_unit_magnitude)
+        finally:
+            self._source = "of_base_units"
 
     def of_native(self, magnitude: float) -> Per[A, B]:
+        self._source = "of_native"
         return Per(magnitude, self.to_base_units(magnitude), self)
 
     def of_native_base_units(
         self, base_unit_magnitude: float
     ) -> Per[A, B]:
+        self._source = "of_native_base_units"
         return Per(
             self.from_base_units(base_unit_magnitude),
             base_unit_magnitude,
@@ -957,11 +1101,13 @@ class MultUnit[A: Unit, B: Unit](Unit):
         self._m_unitA = a
         self._m_unitB = b
         super().__init__(
-            base_unit,
-            a.to_base_units(1.0) * b.to_base_units(1.0),
-            a.from_base_units(1.0) / b.from_base_units(1.0),
-            a.name() + "-" + b.name(),
-            a.symbol() + "*" + b.symbol(),
+            base_unit=base_unit,
+            to_base_converter=UnaryFunction(lambda x: (
+                x * a.to_base_units(1.0) * b.to_base_units(1.0))),
+            from_base_converter=UnaryFunction(lambda x: (
+                x * a.from_base_units(1.0) * b.from_base_units(1.0))),
+            unit_name=a.name() + "-" + b.name(),
+            unit_symbol=a.symbol() + "*" + b.symbol(),
         )
 
     def get_base_unit(self) -> MultUnit[A, B]:
@@ -977,10 +1123,10 @@ class MultUnit[A: Unit, B: Unit](Unit):
     def combine(a: A, b: B) -> MultUnit[A, B]:
         return MultUnitCache.combine(a, b)
 
-    def of(self, magnitude: float) -> Mult[A, B]:
+    def of(self, magnitude: float) -> Mult[A, B]:  # type: ignore
         return self.of_native(magnitude)
 
-    def of_base_units(
+    def of_base_units(  # type: ignore
         self,
         base_unit_magnitude: float
     ) -> Mult[A, B]:
@@ -997,6 +1143,11 @@ class MultUnit[A: Unit, B: Unit](Unit):
             base_unit_magnitude,
             self
         )
+
+    def convert_from(
+        self, magnitude: float, other_unit: Unit
+    ) -> float:
+        return self.from_base_units(other_unit.to_base_units(magnitude))
 
 
 MultUnitCache: CombinatoryUnitCache[Any, Any, MultUnit[Any, Any]] = (
@@ -1024,11 +1175,13 @@ class FrequencyUnit[U: DimensionlessUnit](PerUnit[U, TimeUnit]):
     ) -> FrequencyUnit:
         if not isinstance(numerator, DimensionlessUnit):
             raise TypeError(
-                "Numerator must be dimensionless in a FrequencyUnit"
+                "Numerator must be dimensionless"
+                f"in a FrequencyUnit, got {type(numerator)}"
             )
         if not isinstance(denominator, TimeUnit):
             raise TypeError(
-                "Denominator must be a time unit in a FrequencyUnit"
+                "Denominator must be a time unit"
+                f"in a FrequencyUnit, got {type(denominator)}"
             )
         return FrequencyUnitCache.combine(numerator, denominator)
 
@@ -1048,10 +1201,16 @@ class FrequencyUnit[U: DimensionlessUnit](PerUnit[U, TimeUnit]):
             self
         )
 
-    def per(self, other: Unit) -> VelocityUnit[FrequencyUnit]:
+    @overload
+    def per(self, other: TimeUnit) -> VelocityUnit[FrequencyUnit]: ...
+
+    @overload
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]: ...
+
+    def per(self, other):  # type: ignore
         if isinstance(other, TimeUnit):
             return VelocityUnit.combine(self, other)
-        raise NotImplementedError
+        return super().per(other)
 
 
 FrequencyUnitCache: CombinatoryUnitCache[
@@ -1078,13 +1237,15 @@ class LinearVelocityUnit[U: DistanceUnit](PerUnit[U, TimeUnit]):
     ) -> LinearVelocityUnit:
         if not isinstance(numerator, DistanceUnit):
             raise TypeError(
-                "Numerator must be a distance unit in a LinearVelocityUnit"
+                "Numerator must be a distance unit in a LinearVelocityUnit, "
+                f"got {type(numerator)}"
             )
         if not isinstance(denominator, TimeUnit):
             raise TypeError(
-                "Denominator must be a time unit in a LinearVelocityUnit"
+                "Denominator must be a time unit in a LinearVelocityUnit, "
+                f"got {type(denominator)}"
             )
-        return LinearVelocityUnit.combine(numerator, denominator)
+        return LinearVelocityCache.combine(numerator, denominator)
 
     def get_base_unit(self) -> LinearVelocityUnit:
         return cast(LinearVelocityUnit, super().get_base_unit())
@@ -1101,13 +1262,16 @@ class LinearVelocityUnit[U: DistanceUnit](PerUnit[U, TimeUnit]):
             self
         )
 
-    def per(
-        self,
-        other: Unit
-    ) -> LinearAccelerationUnit[LinearVelocityUnit[DistanceUnit]]:
+    @overload
+    def per(self, other: TimeUnit) -> LinearAccelerationUnit[Self]: ...
+
+    @overload
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]: ...
+
+    def per(self, other):  # type: ignore
         if isinstance(other, TimeUnit):
             return LinearAccelerationUnit.combine(self, other)
-        raise NotImplementedError
+        return super().per(other)
 
 
 LinearVelocityCache: CombinatoryUnitCache[
@@ -1134,11 +1298,13 @@ class AngularVelocityUnit[U: AngleUnit](PerUnit[U, TimeUnit]):
     ) -> AngularVelocityUnit:
         if not isinstance(numerator, AngleUnit):
             raise TypeError(
-                "Numerator must be dimensionless in a AngularVelocityUnit"
+                "Numerator must be dimensionless in a AngularVelocityUnit, "
+                f"got {type(numerator)}"
             )
         if not isinstance(denominator, TimeUnit):
             raise TypeError(
-                "Denominator must be a time unit in a AngularVelocityUnit"
+                "Denominator must be a time unit in a AngularVelocityUnit, "
+                f"got {type(denominator)}"
             )
         return AngularVelocityCache.combine(numerator, denominator)
 
@@ -1162,13 +1328,16 @@ class AngularVelocityUnit[U: AngleUnit](PerUnit[U, TimeUnit]):
             self
         )
 
-    def per(
-        self,
-        other: Unit
-    ) -> AngularAccelerationUnit[AngularVelocityUnit[AngleUnit]]:
+    @overload
+    def per(self, other: TimeUnit) -> AngularAccelerationUnit[Self]: ...
+
+    @overload
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]: ...
+
+    def per(self, other):  # type: ignore
         if isinstance(other, TimeUnit):
             return AngularAccelerationUnit.combine(self, other)
-        raise NotImplementedError
+        return super().per(other)
 
 
 AngularVelocityCache: CombinatoryUnitCache[
@@ -1215,6 +1384,15 @@ class LinearAccelerationUnit[U: LinearVelocityUnit](PerUnit[U, TimeUnit]):
             self
         )
 
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]:  # type: ignore
+        return super().per(other)
+
+    def get_unit(self) -> U:
+        return self.numerator()
+
+    def get_period(self) -> TimeUnit:
+        return self.denominator()
+
 
 LinearAccelerationCache: CombinatoryUnitCache[
     LinearVelocityUnit, TimeUnit, LinearAccelerationUnit
@@ -1240,12 +1418,13 @@ class AngularAccelerationUnit[U: AngularVelocityUnit](PerUnit[U, TimeUnit]):
     ) -> AngularAccelerationUnit:
         if not isinstance(numerator, AngularVelocityUnit):
             raise TypeError(
-                "Numerator must be an angular velocity unit "
-                "in a AngularAccelerationUnit"
+                "Numerator must be an angular velocity unit in a "
+                f"in a AngularAccelerationUnit, got {type(numerator)}"
             )
         if not isinstance(denominator, TimeUnit):
             raise TypeError(
-                "Denominator must be a time unit in a AngularVelocityUnit"
+                f"Denominator must be a time unit "
+                f"in a AngularAccelerationUnit, got {type(denominator)}"
             )
         return AngularAccelerationCache.combine(numerator, denominator)
 
@@ -1269,6 +1448,9 @@ class AngularAccelerationUnit[U: AngularVelocityUnit](PerUnit[U, TimeUnit]):
             self
         )
 
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]:  # type: ignore
+        return super().per(other)
+
 
 AngularAccelerationCache: CombinatoryUnitCache[
     AngularVelocityUnit, TimeUnit, AngularAccelerationUnit
@@ -1287,10 +1469,13 @@ class VelocityUnit[U: Unit](PerUnit[U, TimeUnit]):
         super().__init__(base, numerator, denominator)
 
     @staticmethod
-    def combine(numerator: U, denominator: TimeUnit) -> VelocityUnit[U]:
+    def combine[O: Unit](
+        numerator: O, denominator: TimeUnit
+    ) -> VelocityUnit[O]:
         if not isinstance(denominator, TimeUnit):
             raise TypeError(
-                "Denominator must be a time unit in a VelocityUnit"
+                "Denominator must be a time unit in a VelocityUnit, "
+                f"got {type(denominator)}"
             )
         return cast(VelocityUnit,
                     VelocityUnitCache.combine(numerator, denominator))
@@ -1312,6 +1497,9 @@ class VelocityUnit[U: Unit](PerUnit[U, TimeUnit]):
             base_unit_magnitude,
             self
         )
+
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]:  # type: ignore
+        return super().per(other)
 
 
 VelocityUnitCache: CombinatoryUnitCache[
@@ -1338,12 +1526,13 @@ class ForceUnit[A: MassUnit, B: LinearAccelerationUnit](MultUnit[A, B]):
     ) -> ForceUnit:
         if not isinstance(a, MassUnit):
             raise TypeError(
-                "Numerator (a) must be a mass unit in a ForceUnit"
+                "Numerator (a) must be a mass unit in a ForceUnit, "
+                f"got {type(a)}"
             )
         if not isinstance(b, LinearAccelerationUnit):
             raise TypeError(
                 "Denominator (b) must be a linear acceleration unit "
-                "in a ForceUnit"
+                f"in a ForceUnit, got {type(b)}"
             )
         return ForceCache.combine(a, b)
 
@@ -1368,6 +1557,9 @@ class ForceUnit[A: MassUnit, B: LinearAccelerationUnit](MultUnit[A, B]):
             base_unit_magnitude,
             self
         )
+
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]:  # type: ignore
+        return super().per(other)
 
 
 ForceCache: CombinatoryUnitCache[
@@ -1394,12 +1586,13 @@ class TorqueUnit[A: DistanceUnit, B: ForceUnit](MultUnit[A, B]):
     ) -> TorqueUnit:
         if not isinstance(a, DistanceUnit):
             raise TypeError(
-                "Numerator (a) must be a distance unit in a TorqueUnit"
+                f"Numerator (a) must be a distance unit in a TorqueUnit, "
+                f"got {type(a)}"
             )
         if not isinstance(b, ForceUnit):
             raise TypeError(
                 "Denominator (b) must be a force unit "
-                "in a TorqueUnit"
+                f"in a TorqueUnit, got {type(b)}"
             )
         return TorqueCache.combine(a, b)
 
@@ -1421,6 +1614,9 @@ class TorqueUnit[A: DistanceUnit, B: ForceUnit](MultUnit[A, B]):
             base_unit_magnitude,
             self
         )
+
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]:  # type: ignore
+        return super().per(other)
 
 
 TorqueCache: CombinatoryUnitCache[
@@ -1447,12 +1643,13 @@ class LinearMomentumUnit[A: MassUnit, B: LinearVelocityUnit](MultUnit[A, B]):
     ) -> LinearMomentumUnit:
         if not isinstance(a, MassUnit):
             raise TypeError(
-                "Numerator (a) must be a distance unit in a LinearMomentumUnit"
+                "Numerator (a) must be a distance unit "
+                f"in a LinearMomentumUnit, got {type(a)}"
             )
         if not isinstance(b, LinearVelocityUnit):
             raise TypeError(
                 "Denominator (b) must be a force unit "
-                "in a LinearMomentumUnit"
+                f"in a LinearMomentumUnit, got {type(b)}"
             )
         return LinearMomentumCache.combine(a, b)
 
@@ -1480,6 +1677,9 @@ class LinearMomentumUnit[A: MassUnit, B: LinearVelocityUnit](MultUnit[A, B]):
         self, distance: DistanceUnit
     ) -> AngularMomentumUnit:
         return AngularMomentumUnit.combine(self, distance)
+
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]:  # type: ignore
+        return super().per(other)
 
 
 LinearMomentumCache: CombinatoryUnitCache[
@@ -1510,12 +1710,12 @@ class AngularMomentumUnit[
         if not isinstance(a, LinearMomentumUnit):
             raise TypeError(
                 "Numerator (a) must be a linear momentum unit "
-                "in an AngularMomentumUnit"
+                f"in an AngularMomentumUnit, got {type(a)}"
             )
         if not isinstance(b, DistanceUnit):
             raise TypeError(
                 "Denominator (b) must be a distance unit "
-                "in an AngularMomentumUnit"
+                f"in an AngularMomentumUnit, got {type(b)}"
             )
         return AngularMomentumCache.combine(a, b)
 
@@ -1539,13 +1739,25 @@ class AngularMomentumUnit[
             self
         )
 
-    def per(  # type: ignore[override]
-        self,
-        other: AngularVelocityUnit
-    ) -> MomentOfInertiaUnit:
+    @overload
+    def per[O: AngularVelocityUnit](
+        self, other: O
+    ) -> MomentOfInertiaUnit[Self, O]: ...
+
+    @overload
+    def per(self, other: TimeUnit) -> VelocityUnit[Self]: ...
+
+    @overload
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]: ...
+
+    # type: ignore[override]
+    def per(self, other):  # type: ignore
+        # type: ignore[override]
         if isinstance(other, AngularVelocityUnit):
             return MomentOfInertiaUnit.combine(self, other)
-        raise NotImplementedError
+        elif isinstance(other, TimeUnit):
+            return VelocityUnit.combine(self, other)
+        return super().per(other)
 
 
 AngularMomentumCache: CombinatoryUnitCache[
@@ -1579,12 +1791,12 @@ class MomentOfInertiaUnit[
         if not isinstance(numerator, AngularMomentumUnit):
             raise TypeError(
                 "Numerator must be an angular momentum unit "
-                "in a MomentOfInteriaUnit"
+                f"in a MomentOfInteriaUnit, got {type(numerator)}"
             )
         if not isinstance(denominator, AngularVelocityUnit):
             raise TypeError(
                 "Denominator must be an angular velocity unit "
-                "in a MomentOfInteriaUnit"
+                f"in a MomentOfInteriaUnit, got {type(denominator)}"
             )
         return MomentOfInertiaCache.combine(numerator, denominator)
 
@@ -1608,6 +1820,12 @@ class MomentOfInertiaUnit[
             self
         )
 
+    @overload
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]: ...  # type: ignore
+
+    def per(self, other):  # type: ignore
+        return super().per(other)
+
 
 MomentOfInertiaCache: CombinatoryUnitCache[
     AngularMomentumUnit, AngularVelocityUnit, MomentOfInertiaUnit
@@ -1621,30 +1839,49 @@ class PowerUnit[
     B: (TimeUnit
         | CurrentUnit | VoltageUnit
         | TorqueUnit | AngularVelocityUnit)
-](PerUnit[A, B]):
+](MultUnit[A, B]):
     def __init__(self, energy: A, time: B) -> None:
         base = (
             None
             if energy.is_base_unit() and time.is_base_unit()
             else PowerUnit.combine(
-                energy.get_base_unit(), time.get_base_unit()
+                energy.get_base_unit(), time.get_base_unit()  # type: ignore
             )
         )
         super().__init__(base, energy, time)
 
+    @overload
     @staticmethod
-    def combine(
-        numerator: (
-            EnergyUnit
-            | VoltageUnit | CurrentUnit
-            | AngularVelocityUnit | TorqueUnit
-        ),
-        denominator: (
-            TimeUnit
-            | CurrentUnit | VoltageUnit
-            | TorqueUnit | AngularVelocityUnit
-        )
-    ) -> PowerUnit:
+    def combine[A_: EnergyUnit, B_: TimeUnit](
+        a: A_, b: B_
+    ) -> PowerUnit[A_, B_]: ...
+
+    @overload
+    @staticmethod
+    def combine[A_: VoltageUnit, B_: CurrentUnit](
+        a: A_, b: B_
+    ) -> PowerUnit[A_, B_]: ...
+
+    @overload
+    @staticmethod
+    def combine[A_: CurrentUnit, B_: VoltageUnit](
+        a: A_, b: B_
+    ) -> PowerUnit[A_, B_]: ...
+
+    @overload
+    @staticmethod
+    def combine[A_: AngularVelocityUnit, B_: TorqueUnit](
+        a: A_, b: B_
+    ) -> PowerUnit[A_, B_]: ...
+
+    @overload
+    @staticmethod
+    def combine[A_: TorqueUnit, B_: AngularVelocityUnit](
+        a: A_, b: B_
+    ) -> PowerUnit[A_, B_]: ...
+
+    @staticmethod
+    def combine(a, b):
         ALLOWED_PAIRS: tuple[tuple[type[Unit], type[Unit]], ...] = (
             (EnergyUnit, TimeUnit),
             (VoltageUnit, CurrentUnit),
@@ -1655,15 +1892,15 @@ class PowerUnit[
         try:
             type_i = next(
                 (i for i, (t, _) in enumerate(ALLOWED_PAIRS)
-                 if t == type(numerator))
+                 if t == type(a))
             )
             expect_denom_type = ALLOWED_PAIRS[type_i][1]
-            if not isinstance(denominator, expect_denom_type):
+            if not isinstance(b, expect_denom_type):
                 raise TypeError(
-                    "Second element does not have correct matching type:"
-                    f"{type(denominator)} is invalid, "
-                    f"expected {expect_denom_type}")
-            return PowerCache.combine(numerator, denominator)
+                    "Second element does not have correct matching type: "
+                    f"expected {expect_denom_type}, but "
+                    f"got invalid {type(b)}")
+            return PowerCache.combine(a, b)
         except (StopIteration, IndexError):
             raise TypeError("Type not found")
 
@@ -1685,6 +1922,9 @@ class PowerUnit[
             base_unit_magnitude,
             self
         )
+
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]:  # type: ignore
+        return super().per(other)
 
 
 PowerCache: CombinatoryUnitCache[
@@ -1722,12 +1962,13 @@ class ResistanceUnit[A: VoltageUnit, B: CurrentUnit](PerUnit[A, B]):
     ) -> ResistanceUnit:
         if not isinstance(numerator, VoltageUnit):
             raise TypeError(
-                "Numerator must be a voltage unit in a ResistanceUnit"
+                "Numerator must be a voltage unit in a ResistanceUnit, "
+                f"got {type(numerator)}"
             )
         if not isinstance(denominator, CurrentUnit):
             raise TypeError(
                 "Denominator must be a current unit "
-                "in a ResistanceUnit"
+                f"in a ResistanceUnit, got {type(denominator)}"
             )
         return ResistanceCache.combine(numerator, denominator)
 
@@ -1746,33 +1987,147 @@ class ResistanceUnit[A: VoltageUnit, B: CurrentUnit](PerUnit[A, B]):
             self
         )
 
+    @overload
+    def per[O: Unit](self, other: O) -> PerUnit[Self, O]: ...  # type: ignore
+
+    def per(self, other):  # type: ignore
+        return super().per(other)
+
 
 ResistanceCache: CombinatoryUnitCache[
     VoltageUnit, CurrentUnit, ResistanceUnit
 ] = CombinatoryUnitCache(ResistanceUnit)
 
 
+class AccelerationUnit[U: Unit](PerUnit[VelocityUnit[U], TimeUnit]):
+    @overload
+    def __init__(self, velocity_unit: U, period: TimeUnit):  # type: ignore
+        base = (
+            None
+            if velocity_unit.is_base_unit() and period.is_base_unit()
+            else AccelerationUnit.combine(
+                velocity_unit.get_base_unit(),  # type: ignore
+                period.get_base_unit()
+            )
+        )
+        super().__init__(base, velocity_unit, period)  # type: ignore
+
+    @overload
+    def __init__(
+        self,
+        base_unit: AccelerationUnit[U],
+        to_base_converter: UnaryFunction,
+        from_base_converter: UnaryFunction,
+        name: str,
+        symbol: str
+    ):
+        super().__init__(  # type: ignore # noqa: S930
+            base_unit=base_unit,
+            to_base_converter=to_base_converter,   # type: ignore # noqa: S930
+            from_base_converter=(   # type: ignore # noqa: S930
+                from_base_converter),
+            unit_name=name,   # type: ignore # noqa: S930
+            unit_symbol=symbol   # type: ignore # noqa: S930
+        )
+
+    @staticmethod
+    def combine[O: Unit](  # type: ignore
+        numerator: VelocityUnit[O],
+        denominator: TimeUnit
+    ) -> AccelerationUnit[VelocityUnit[O]]:
+        if not isinstance(numerator, VelocityUnit):
+            raise TypeError(
+                "Numerator must be a voltage unit in a ResistanceUnit, "
+                f"got {type(numerator)}"
+            )
+        if not isinstance(denominator, TimeUnit):
+            raise TypeError(
+                "Denominator must be a current unit "
+                f"in a ResistanceUnit, got {type(denominator)}"
+            )
+        return AccelerationUnitCache.combine(
+            numerator, denominator)  # type: ignore
+
+    def get_base_unit(self) -> AccelerationUnit:
+        return cast(AccelerationUnit, super().get_base_unit())
+
+    def of(  # type: ignore
+        self, magnitude: float
+    ) -> AccelerationUnit:
+        return self.__init__(magnitude,  # type: ignore
+                             self.to_base_units(magnitude),
+                             self)
+
+    def of_base_units(  # type: ignore[override]
+        self, base_unit_magnitude: float
+    ) -> Acceleration:
+        return Acceleration(
+            self.from_base_units(base_unit_magnitude),
+            base_unit_magnitude,
+            self
+        )
+
+    @overload  # type: ignore[no-overload-impl]
+    def per(  # type: ignore
+        self, other: "TimeUnit"  # noqa: UP037
+    ) -> VelocityUnit[AccelerationUnit[U]]: ...
+
+    @overload
+    def per[O: "Unit"](
+        self, other: O
+    ) -> PerUnit[Self, O]: ...
+
+    def per(self, other):  # type: ignore
+        return super().per(other)
+
+
+AccelerationUnitCache: CombinatoryUnitCache[
+    VelocityUnit[Unit], TimeUnit, AccelerationUnit
+] = CombinatoryUnitCache(AccelerationUnit)
+
+
+@final
 class BaseUnits:
-    DistanceUnit: Final = DistanceUnit(None, 1.0, "Meter", "m")  # noqa: S116
-    TimeUnit: Final = TimeUnit(None, 1.0, "Second", "s")  # noqa: S116
-    MassUnit: Final = MassUnit(None, 1.0, "Kilogram", "Kg")  # noqa: S116
-    AngleUnit: Final = AngleUnit(None, 1.0, "Radian", "rad")  # noqa: S116
-    VoltageUnit: Final = VoltageUnit(None, 1.0, "Volt", "V")  # noqa: S116
-    CurrentUnit: Final = CurrentUnit(None, 1.0, "Amp", "A")  # noqa: S116
-    EnergyUnit: Final = EnergyUnit(None, 1.0, "Joule", "J")  # noqa: S116
-    TemperatureUnit: Final = TemperatureUnit(  # noqa: S116
-        None, UnaryFunction.IDENTITY, UnaryFunction.IDENTITY, "Kelvin", "K"
+    BaseDistanceUnit: Final = DistanceUnit(  # noqa: S116
+        base_unit=None, base_unit_equivalent=1.0,
+        unit_name="Meter", unit_symbol="m")
+    BaseTimeUnit: Final = TimeUnit(  # noqa: S116
+        base_unit=None, base_unit_equivalent=1.0,
+        unit_name="Second", unit_symbol="s")
+    BaseMassUnit: Final = MassUnit(  # noqa: S116
+        base_unit=None, base_unit_equivalent=1.0,
+        unit_name="Kilogram", unit_symbol="Kg")
+    BaseAngleUnit: Final = AngleUnit(  # noqa: S116
+        base_unit=None, base_unit_equivalent=1.0, 
+        unit_name="Radian", unit_symbol="rad")
+    BaseVoltageUnit: Final = VoltageUnit(  # noqa: S116
+        base_unit=None, base_unit_equivalent=1.0,
+        unit_name="Volt", unit_symbol="V")
+    BaseCurrentUnit: Final = CurrentUnit(  # noqa: S116
+        base_unit=None, base_unit_equivalent=1.0,
+        unit_name="Amp", unit_symbol="A")
+    BaseEnergyUnit: Final = EnergyUnit(  # noqa: S116
+        base_unit=None, base_unit_equivalent=1.0,
+        unit_name="Joule", unit_symbol="J")
+    BaseTemperatureUnit: Final = TemperatureUnit(  # noqa: S116
+        base_unit=None,
+        to_base_converter=UnaryFunction.IDENTITY,
+        from_base_converter=UnaryFunction.IDENTITY,
+        unit_name="Kelvin", unit_symbol="K"
     )
-    Value: Final = DimensionlessUnit(None, 1.0, "<?>", "<?>")  # noqa: S116
+    BaseValue: Final = DimensionlessUnit(  # noqa: S116
+        base_unit=None, base_unit_equivalent=1.0,
+        unit_name="<?>", unit_symbol="<?>")
 
 
+@final
 class Units:
-    Value: Final = BaseUnits.Value  # noqa: S116
+    Value: Final = BaseUnits.BaseValue  # noqa: S116
     Percent: Final = (UnitBuilder(Value).split_into(100.0)  # noqa: S116
                       .named("Percent").symbol("%")
                       .make_and_cast(DimensionlessUnit))
 
-    Meters: Final = BaseUnits.DistanceUnit  # noqa: S116
+    Meters: Final = BaseUnits.BaseDistanceUnit  # noqa: S116
     Meter: Final = Meters  # noqa: S116
     Millimeters: Final = (UnitBuilder(Meters).split_into(1000.0)  # noqa: S116
                           .named("Millimeter").symbol("mm")
@@ -1791,7 +2146,7 @@ class Units:
                    .make_and_cast(DistanceUnit))
     Foot: Final = Feet  # noqa: S116
 
-    Seconds: Final = BaseUnits.TimeUnit  # noqa: S116
+    Seconds: Final = BaseUnits.BaseTimeUnit  # noqa: S116
     Second: Final = Seconds  # noqa: S116
     Milliseconds: Final = (UnitBuilder(Seconds)  # noqa: S116
                            .split_into(1000.0).named("Millisecond")
@@ -1814,7 +2169,7 @@ class Units:
                       .make_and_cast(TimeUnit))
     Minute: Final = Minutes  # noqa: S116
 
-    Radians: Final = BaseUnits.AngleUnit  # noqa: S116
+    Radians: Final = BaseUnits.BaseAngleUnit  # noqa: S116
     Radian: Final = Radians  # noqa: S116
     Revolutions: Final = (UnitBuilder(Radians)  # noqa: S116
                           .aggregate(2.0 * math.pi)
@@ -1861,7 +2216,7 @@ class Units:
                      LinearVelocityUnit[DistanceUnit]
                      ]))
 
-    Kilograms: Final = BaseUnits.MassUnit  # noqa: S116
+    Kilograms: Final = BaseUnits.BaseMassUnit  # noqa: S116
     Kilogram: Final = Kilograms  # noqa: S116
     Grams: Final = (UnitBuilder(Kilograms).split_into(1000.0)  # noqa: S116
                     .named("Gram").symbol("g")
@@ -1971,14 +2326,14 @@ class Units:
         ])
     )
 
-    Volts: Final = BaseUnits.VoltageUnit  # noqa: S116
+    Volts: Final = BaseUnits.BaseVoltageUnit  # noqa: S116
     Volt: Final = Volts  # noqa: S116
     Millivolts: Final = (UnitBuilder(Volts).split_into(1000.0)  # noqa: S116
                          .named("Millivolt").symbol("mV")
                          .make_and_cast(VoltageUnit))
     Millivolt: Final = Millivolts  # noqa: S116
 
-    Amps: Final = BaseUnits.CurrentUnit  # noqa: S116
+    Amps: Final = BaseUnits.BaseCurrentUnit  # noqa: S116
     Amp: Final = Amps  # noqa: S116
     Milliamps: Final = (UnitBuilder(Amps).split_into(1000.0)  # noqa: S116
                         .named("Milliamp").symbol("mA")
@@ -1998,7 +2353,7 @@ class Units:
                         .make_and_cast(ResistanceUnit))
     MilliOhm: Final = MilliOhms  # noqa: S116
 
-    Joules: Final = BaseUnits.EnergyUnit  # noqa: S116
+    Joules: Final = BaseUnits.BaseEnergyUnit  # noqa: S116
     Joule: Final = Joules  # noqa: S116
     Millijoules: Final = (UnitBuilder(Joules).split_into(1000.0)  # noqa: S116
                           .named("Millijoule").symbol("mJ")
@@ -2021,7 +2376,7 @@ class Units:
                          .named("Horsepower").symbol("HP")
                          .make_and_cast(PerUnit[EnergyUnit, TimeUnit]))
 
-    Kelvin: Final = BaseUnits.TemperatureUnit  # noqa: S116
+    Kelvin: Final = BaseUnits.BaseTemperatureUnit  # noqa: S116
     Celsius: Final = (UnitBuilder(Kelvin).offset(273.15)  # noqa: S116
                       .named("Celsius").symbol("\xb0C")
                       .make_and_cast(TemperatureUnit))
